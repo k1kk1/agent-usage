@@ -56,6 +56,8 @@ Claude        20.0%
 ${XDG_RUNTIME_DIR:-$HOME/.cache}/agent-status/state.json
 ```
 
+`updated_at` と各 `reset_at` は表示しやすいよう JST 文字列で保存します。
+
 例:
 
 ```json

@@ -19,7 +19,7 @@ epoch_to_iso() {
     printf 'null'
     return
   fi
-  date -u -r "$value" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf 'null'
+  TZ=Asia/Tokyo date -r "$value" '+%Y-%m-%d %H:%M:%S JST' 2>/dev/null || printf 'null'
 }
 
 get_claude_json() {
@@ -70,7 +70,7 @@ write_state_once() {
   tmp="${STATE_FILE}.$$"
 
   jq -n \
-    --arg updated_at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    --arg updated_at "$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M:%S JST')" \
     --argjson claude "$claude" \
     --argjson codex "$codex" \
     '$claude + $codex + {updated_at:$updated_at}' >"$tmp" \

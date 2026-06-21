@@ -51,8 +51,10 @@ fmt_reset() {
     return
   fi
 
-  if date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$value" "+%m/%d %H:%M" >/dev/null 2>&1; then
-    date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$value" "+%m/%d %H:%M"
+  if date -j -f "%Y-%m-%d %H:%M:%S JST" "$value" "+%m/%d %H:%M" >/dev/null 2>&1; then
+    date -j -f "%Y-%m-%d %H:%M:%S JST" "$value" "+%m/%d %H:%M"
+  elif date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$value" "+%m/%d %H:%M" >/dev/null 2>&1; then
+    TZ=Asia/Tokyo date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$value" "+%m/%d %H:%M"
   else
     printf '%s' "$value" | sed 's/T/ /; s/Z$//' | cut -c 6-16
   fi

@@ -31,7 +31,7 @@ prepare_state_dir() {
 }
 
 iso_now() {
-  date -u +"%Y-%m-%dT%H:%M:%SZ"
+  TZ=Asia/Tokyo date +"%Y-%m-%d %H:%M:%S JST"
 }
 
 json_error() {
@@ -184,7 +184,7 @@ fetch_claude_usage() {
       else null end;
     def reset(v):
       if v == null then null
-      elif (v|type) == "number" then (v | strftime("%Y-%m-%dT%H:%M:%SZ"))
+      elif (v|type) == "number" then ((v + 32400) | strftime("%Y-%m-%d %H:%M:%S JST"))
       else v end;
     {
       agent:"claude",
@@ -249,7 +249,7 @@ fetch_codex_usage() {
       else null end;
     def epoch_or_text(v):
       if v == null then null
-      elif (v|type) == "number" then (v | strftime("%Y-%m-%dT%H:%M:%SZ"))
+      elif (v|type) == "number" then ((v + 32400) | strftime("%Y-%m-%d %H:%M:%S JST"))
       else v end;
     (.result.rateLimits // .result) as $r
     | {

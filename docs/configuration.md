@@ -47,6 +47,8 @@ tmux split-window -h -l 48 './agent-status-pane.sh'
 AGENT_STATUS_BAR_WIDTH=12 ./agent-status-pane.sh
 ```
 
+表示される更新時刻とリセット時刻は JST です。
+
 ## 共通設定
 
 | 変数 | 既定値 | 説明 |
