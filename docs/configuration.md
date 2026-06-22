@@ -58,13 +58,9 @@ AGENT_STATUS_BAR_WIDTH=12 ./agent-status-pane.sh
 | `AGENT_STATUS_STATE_FILE` | `$AGENT_STATUS_STATE_DIR/state.json` | Daemon と Viewer が共有する状態 JSON |
 | `AGENT_STATUS_INTERVAL_SECONDS` | `60` | Daemon の取得間隔 |
 | `AGENT_STATUS_PANE_REFRESH_SECONDS` | `3` | Viewer の再描画間隔 |
-| `AGENT_STATUS_REQUEST_TIMEOUT_SECONDS` | `12` | API リクエストのタイムアウト |
 | `AGENT_STATUS_BAR_WIDTH` | `16` | プログレスバー幅 |
-| `AGENT_STATUS_INCLUDE_RAW` | `0` | `1` のとき raw API 応答を状態 JSON に含める |
 | `CODEX_APP_SERVER_COMMAND` | `codex app-server` | Codex の stdio JSON-RPC コマンド |
 | `CODEX_APP_SERVER_WAIT_SECONDS` | `10` | Codex app-server からのレスポンス待機秒数 |
-
-`AGENT_STATUS_INCLUDE_RAW=1` はデバッグ用です。usage 応答にはアカウント情報が含まれる可能性があるため、通常は無効のまま使います。
 
 ## Claude Code
 
@@ -130,4 +126,4 @@ account/rateLimits/read
 CODEX_RATE_LIMIT_METHOD=account/rateLimits/read
 ```
 
-取得したトークンをシェル履歴に残さないよう注意してください。Daemon は Bearer トークンを `curl` のプロセス引数に載せない実装ですが、環境変数自体はローカル権限によって参照可能な場合があります。
+Daemon は Claude Code の OAuth token を直接扱いません。

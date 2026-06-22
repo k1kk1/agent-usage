@@ -15,6 +15,14 @@ LOCK_DIR="${AGENT_STATUS_LOCK_DIR:-$STATE_DIR/daemon.lock}"
 REFRESH_SECONDS="${AGENT_STATUS_PANE_REFRESH_SECONDS:-3}"
 DAEMON_LOG="${AGENT_STATUS_DAEMON_LOG:-$STATE_DIR/daemon.log}"
 BAR_WIDTH="${AGENT_STATUS_BAR_WIDTH:-16}"
+SLEEP_PID=""
+LAST_RENDERED_UPDATED_AT=""
+
+BOLD=$'\033[1m'
+DIM=$'\033[2m'
+CYAN=$'\033[36m'
+GREEN=$'\033[32m'
+RESET=$'\033[0m'
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
@@ -44,6 +52,10 @@ start_daemon_if_needed() {
   nohup "$DAEMON_SCRIPT" >>"$DAEMON_LOG" 2>&1 &
 }
 
+ensure_daemon() {
+  start_daemon_if_needed
+}
+
 fmt_reset() {
   local value="$1"
   if [[ -z "$value" || "$value" == "null" ]]; then
@@ -51,12 +63,10 @@ fmt_reset() {
     return
   fi
 
-  if date -j -f "%Y-%m-%d %H:%M:%S JST" "$value" "+%m/%d %H:%M" >/dev/null 2>&1; then
-    date -j -f "%Y-%m-%d %H:%M:%S JST" "$value" "+%m/%d %H:%M"
-  elif date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$value" "+%m/%d %H:%M" >/dev/null 2>&1; then
-    TZ=Asia/Tokyo date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$value" "+%m/%d %H:%M"
+  if [[ "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2}\ JST$ ]]; then
+    printf '%s' "$value" | cut -c 6-16 | tr '-' '/'
   else
-    printf '%s' "$value" | sed 's/T/ /; s/Z$//' | cut -c 6-16
+    printf '%s' "$value"
   fi
 }
 
@@ -79,72 +89,221 @@ progress_bar() {
   printf '%*s' "$empty" '' | tr ' ' '░'
 }
 
-render_agent() {
-  local key="$1"
-  local name="$2"
-  local status message primary_pct primary_reset secondary_pct secondary_reset
+state_value() {
+  local expr="$1"
+  jq -r "$expr // empty" "$STATE_FILE" 2>/dev/null
+}
 
-  status="$(jq -r --arg key "$key" '.agents[$key].status // "offline"' "$STATE_FILE" 2>/dev/null)"
-  message="$(jq -r --arg key "$key" '.agents[$key].message // empty' "$STATE_FILE" 2>/dev/null)"
+row() {
+  local name="$1"
+  local window="$2"
+  local pct="$3"
+  local expires="$4"
+  local pct_label="--.-%"
 
-  printf '%-12s ' "$name"
-  if [[ "$status" != "ok" && "$status" != "stale" ]]; then
-    case "$status" in
-      auth_error) printf 'Auth Error\n' ;;
-      rate_limited) printf 'Rate Limited\n' ;;
-      offline) printf 'Offline\n' ;;
-      parse_error) printf 'Parse Error\n' ;;
-      *) printf '%s\n' "$status" ;;
-    esac
-    if [[ -n "$message" ]]; then
-      printf '  %s\n' "$message" | cut -c 1-46
-    fi
-    return
+  if [[ "$pct" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    pct_label="$(printf '%4.1f%%' "$pct")"
   fi
 
-  primary_pct="$(jq -r --arg key "$key" '.agents[$key].windows.primary.used_pct // null' "$STATE_FILE")"
-  primary_reset="$(jq -r --arg key "$key" '.agents[$key].windows.primary.reset_at // null' "$STATE_FILE")"
-  if [[ "$primary_pct" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-    if [[ "$status" == "stale" ]]; then
-      printf '%5.1f%% stale\n' "$primary_pct"
-    else
-      printf '%5.1f%%\n' "$primary_pct"
-    fi
+  printf "%-7.7s ${DIM}%-2.2s${RESET} [%s] %6s ${DIM}%s${RESET}" \
+    "$name" \
+    "$window" \
+    "$(progress_bar "$pct")" \
+    "$pct_label" \
+    "$(fmt_reset "$expires")"
+}
+
+strip_ansi() {
+  sed $'s/\033\\[[0-9;]*[[:alpha:]]//g'
+}
+
+vlen() {
+  printf '%s' "$1" | strip_ansi | wc -m | tr -d ' '
+}
+
+pad_to() {
+  local text="$1"
+  local width="$2"
+  local len pad
+
+  len="$(vlen "$text")"
+  pad=$((width - len))
+  ((pad < 0)) && pad=0
+  printf '%s%*s' "$text" "$pad" ''
+}
+
+label_path() {
+  local path="$1"
+  case "$path" in
+    "$HOME") printf '~' ;;
+    "$HOME"/*) printf '~/%s' "${path#"$HOME"/}" ;;
+    *) printf '%s' "$path" ;;
+  esac
+}
+
+shorten_path() {
+  local path="$1"
+  local width="$2"
+  local len
+
+  len="$(vlen "$path")"
+  if ((len <= width)); then
+    printf '%s' "$path"
+  elif ((width <= 1)); then
+    printf '…'
   else
-    printf '  --.-%%\n'
-  fi
-  printf '  5h [%s] %s\n' "$(progress_bar "$primary_pct")" "$(fmt_reset "$primary_reset")"
-
-  secondary_pct="$(jq -r --arg key "$key" '.agents[$key].windows.secondary.used_pct // empty' "$STATE_FILE")"
-  secondary_reset="$(jq -r --arg key "$key" '.agents[$key].windows.secondary.reset_at // empty' "$STATE_FILE")"
-  if [[ "$secondary_pct" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-    printf '  7d [%s] %s\n' "$(progress_bar "$secondary_pct")" "$(fmt_reset "$secondary_reset")"
+    printf '…%s' "${path: -$((width - 1))}"
   fi
 }
 
-render() {
-  local updated_at
+clear_remaining_lines() {
+  local used="$1"
+  local lines i
+
+  lines="${LINES:-$(tput lines 2>/dev/null || echo 24)}"
+  for ((i = used; i < lines; i++)); do
+    printf '\033[K\n'
+  done
+}
+
+render_starting() {
+  printf '\033[H'
+  printf "${BOLD}${CYAN} Agent Status${RESET} ${DIM}· starting daemon...${RESET}\033[K\n"
+  printf "${DIM}state: %s${RESET}\033[K\n" "$STATE_FILE"
+  clear_remaining_lines 2
+}
+
+render_left_lines() {
+  local updated="$1"
+  local cc5p="$2" cc5e="$3" cc7p="$4" cc7e="$5"
+  local cx5p="$6" cx5e="$7" cxwp="$8" cxwe="$9"
+  local updated_label="waiting"
+
+  [[ -n "$updated" ]] && updated_label="$(fmt_reset "$updated")"
+
+  printf '%s\n' "$(printf "${BOLD}${CYAN} Agent Status${RESET}  ${DIM}· updated %s${RESET}" "$updated_label")"
+  printf '%s\n' "$(printf "${DIM} ─────────────────────────────────────────${RESET}")"
+  printf '%s\n' "$(row "Claude" "5h" "$cc5p" "$cc5e")"
+  printf '%s\n' "$(row ""       "7d" "$cc7p" "$cc7e")"
+  printf '%s\n' "$(row "Codex"  "5h" "$cx5p" "$cx5e")"
+  printf '%s\n' "$(row ""       "7d" "$cxwp" "$cxwe")"
+}
+
+render_ports_lines() {
+  local left_width="$1"
+  local ports cols avail p c w
+
+  ports="$(jq -r '.ports[]? | [.port, .command, .cwd] | @tsv' "$STATE_FILE" 2>/dev/null)"
+  [[ -z "$ports" ]] && return
+
+  cols="${COLUMNS:-$(tput cols 2>/dev/null || echo 120)}"
+  avail=$((cols - left_width - 23))
+  ((avail < 8)) && avail=8
+
+  printf '%s\n' "$(printf "${DIM}ports${RESET}")"
+
+  while IFS=$'\t' read -r p c w; do
+    [[ -z "$p" ]] && continue
+    printf '%s\n' "$(
+      printf "${GREEN}%-6.6s${RESET} ${DIM}%-15.15s${RESET} %s" \
+        "$p" \
+        "$c" \
+        "$(shorten_path "$(label_path "$w")" "$avail")"
+    )"
+  done <<<"$ports"
+}
+
+calc_lines_width() {
+  local line max=0 len
+
+  while IFS= read -r line; do
+    len="$(vlen "$line")"
+    ((len > max)) && max="$len"
+  done
+
+  printf '%s' "$max"
+}
+
+render_columns() {
+  local left_text="$1"
+  local right_text="$2"
+  local left_width="$3"
+  local left_count right_count n i left_line right_line
+
+  left_count="$(printf '%s\n' "$left_text" | wc -l | tr -d ' ')"
+  right_count=0
+  [[ -n "$right_text" ]] && right_count="$(printf '%s\n' "$right_text" | wc -l | tr -d ' ')"
+  n="$left_count"
+  ((right_count > n)) && n="$right_count"
+
+  printf '\033[H'
+
+  for ((i = 1; i <= n; i++)); do
+    left_line="$(printf '%s\n' "$left_text" | sed -n "${i}p")"
+    right_line=""
+    [[ -n "$right_text" ]] && right_line="$(printf '%s\n' "$right_text" | sed -n "${i}p")"
+    printf '%s%s\033[K\n' \
+      "$(pad_to "$left_line" "$left_width")" \
+      "$right_line"
+  done
+
+  clear_remaining_lines "$n"
+}
+
+render_dashboard() {
+  local updated="$1"
+  local cc5p cc5e cc7p cc7e cx5p cx5e cxwp cxwe
+  local left_text right_text left_width
+
+  cc5p="$(state_value '.agents.claude.windows.primary.used_pct')"
+  cc5e="$(state_value '.agents.claude.windows.primary.reset_at')"
+  cc7p="$(state_value '.agents.claude.windows.secondary.used_pct')"
+  cc7e="$(state_value '.agents.claude.windows.secondary.reset_at')"
+  cx5p="$(state_value '.agents.codex.windows.primary.used_pct')"
+  cx5e="$(state_value '.agents.codex.windows.primary.reset_at')"
+  cxwp="$(state_value '.agents.codex.windows.secondary.used_pct')"
+  cxwe="$(state_value '.agents.codex.windows.secondary.reset_at')"
+
+  left_text="$(render_left_lines \
+    "$updated" \
+    "$cc5p" "$cc5e" \
+    "$cc7p" "$cc7e" \
+    "$cx5p" "$cx5e" \
+    "$cxwp" "$cxwe"
+  )"
+
+  left_width="$(calc_lines_width <<<"$left_text")"
+  left_width=$((left_width + 3))
+
+  right_text="$(render_ports_lines "$left_width")"
+
+  render_columns "$left_text" "$right_text" "$left_width"
+}
+
+draw() {
+  local updated
+
   tput civis 2>/dev/null || true
-  tput cup 0 0 2>/dev/null || clear
-  tput ed 2>/dev/null || true
+  ensure_daemon
 
-  printf 'AI Agent Quotas\n'
-  printf '================\n'
-
-  if [[ ! -s "$STATE_FILE" ]]; then
-    printf 'Waiting for daemon...\n'
+  if [[ ! -f "$STATE_FILE" ]]; then
+    render_starting
     return
   fi
 
-  updated_at="$(jq -r '.updated_at // empty' "$STATE_FILE" 2>/dev/null)"
-  printf 'Updated %s\n\n' "$(fmt_reset "$updated_at")"
+  updated="$(state_value '.updated_at')"
+  if [[ -n "$updated" && "$updated" == "$LAST_RENDERED_UPDATED_AT" ]]; then
+    return
+  fi
 
-  render_agent "claude" "Claude"
-  printf '\n'
-  render_agent "codex" "Codex"
+  LAST_RENDERED_UPDATED_AT="$updated"
+  render_dashboard "$updated"
 }
 
 cleanup() {
+  if [[ -n "${SLEEP_PID:-}" ]]; then
+    kill "$SLEEP_PID" 2>/dev/null || true
+  fi
   tput cnorm 2>/dev/null || true
 }
 
@@ -153,19 +312,25 @@ stop_pane() {
   exit 0
 }
 
+sleep_for_refresh() {
+  sleep "$REFRESH_SECONDS" &
+  SLEEP_PID="$!"
+  wait "$SLEEP_PID" 2>/dev/null || true
+  SLEEP_PID=""
+}
+
 main() {
   if ! command_exists jq || ! command_exists bc; then
     printf 'agent-status-pane requires jq and bc\n' >&2
     exit 1
   fi
 
-  start_daemon_if_needed
   trap cleanup EXIT
   trap stop_pane INT TERM
 
   while :; do
-    render
-    sleep "$REFRESH_SECONDS"
+    draw
+    sleep_for_refresh
   done
 }
 

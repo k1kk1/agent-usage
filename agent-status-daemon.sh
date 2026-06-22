@@ -12,8 +12,6 @@ STATE_DIR="${AGENT_STATUS_STATE_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/agent-stat
 STATE_FILE="${AGENT_STATUS_STATE_FILE:-$STATE_DIR/state.json}"
 LOCK_DIR="${AGENT_STATUS_LOCK_DIR:-$STATE_DIR/daemon.lock}"
 INTERVAL_SECONDS="${AGENT_STATUS_INTERVAL_SECONDS:-60}"
-REQUEST_TIMEOUT_SECONDS="${AGENT_STATUS_REQUEST_TIMEOUT_SECONDS:-12}"
-INCLUDE_RAW="${AGENT_STATUS_INCLUDE_RAW:-0}"
 
 CLAUDE_STATUS_FILE="${CLAUDE_STATUS_FILE:-$STATE_DIR/claude-status.json}"
 
@@ -46,43 +44,6 @@ json_error() {
     '{agent:$agent,status:$status,message:$message,updated_at:$updated_at,windows:{}}'
 }
 
-read_existing_agent() {
-  local agent="$1"
-  if [[ -s "$STATE_FILE" ]]; then
-    jq -c --arg agent "$agent" '.agents[$agent] // empty' "$STATE_FILE" 2>/dev/null
-  fi
-}
-
-merge_with_previous_if_failed() {
-  local agent="$1"
-  local next="$2"
-  local previous status message
-
-  status="$(jq -r '.status // "error"' <<<"$next" 2>/dev/null)"
-  if [[ "$status" == "ok" ]]; then
-    printf '%s\n' "$next"
-    return
-  fi
-
-  previous="$(read_existing_agent "$agent" || true)"
-  if [[ -z "$previous" ]]; then
-    printf '%s\n' "$next"
-    return
-  fi
-
-  if [[ "$(jq -r '.status // empty' <<<"$previous" 2>/dev/null)" != "ok" ]]; then
-    printf '%s\n' "$next"
-    return
-  fi
-
-  message="$(jq -r '.message // .status // "fetch failed"' <<<"$next" 2>/dev/null)"
-  jq -c \
-    --arg failed_at "$(iso_now)" \
-    --arg message "$message" \
-    '. + {status:"stale", stale_since:$failed_at, message:$message}' \
-    <<<"$previous"
-}
-
 acquire_lock() {
   if mkdir "$LOCK_DIR" 2>/dev/null; then
     printf '%s\n' "$$" >"$LOCK_DIR/pid"
@@ -95,6 +56,7 @@ acquire_lock() {
     return 1
   fi
 
+  rm -f "$LOCK_DIR/pid" 2>/dev/null || return 1
   rmdir "$LOCK_DIR" 2>/dev/null || return 1
   mkdir "$LOCK_DIR" 2>/dev/null || return 1
   printf '%s\n' "$$" >"$LOCK_DIR/pid"
@@ -173,14 +135,10 @@ fetch_claude_usage() {
     return
   }
 
-  jq -c --arg updated_at "$(iso_now)" --arg include_raw "$INCLUDE_RAW" --argjson raw "$body" '
+  jq -c --arg updated_at "$(iso_now)" '
     def pct(v):
       if v == null then null
       elif (v|type) == "number" then v
-      else null end;
-    def ratio(v):
-      if v == null then null
-      elif (v|type) == "number" then (v * 100)
       else null end;
     def reset(v):
       if v == null then null
@@ -210,8 +168,7 @@ fetch_claude_usage() {
       cost:{
         total_usd:(.cost.total_cost_usd // null)
       }
-    } as $out
-    | if $include_raw == "1" then $out + {raw:$raw} else $out end
+    }
   ' <<<"$body" 2>/dev/null || json_error "claude" "parse_error" "Claude usage response was not understood"
 }
 
@@ -238,7 +195,7 @@ fetch_codex_usage() {
     return
   fi
 
-  jq -c --arg updated_at "$(iso_now)" --arg include_raw "$INCLUDE_RAW" --argjson raw "$response" '
+  jq -c --arg updated_at "$(iso_now)" '
     def pct(v):
       if v == null then null
       elif (v|type) == "number" then v
@@ -270,8 +227,7 @@ fetch_codex_usage() {
           reset_at:epoch_or_text($r.secondary.reset_at // $r.secondary.resets_at // $r.secondary.resetsAt // $r.secondary.reset_time // $r.secondary.resetAt)
         }
       }
-    } as $out
-    | if $include_raw == "1" then $out + {raw:$raw} else $out end
+    }
   ' <<<"$response" 2>/dev/null || json_error "codex" "parse_error" "Codex rate-limit response was not understood"
 }
 
@@ -310,16 +266,16 @@ collect_once() {
   fetch_codex_usage >"$codex_file" &
   wait
 
-  claude="$(merge_with_previous_if_failed "claude" "$(cat "$claude_file" 2>/dev/null || json_error "claude" "error" "No Claude state")")"
-  codex="$(merge_with_previous_if_failed "codex" "$(cat "$codex_file" 2>/dev/null || json_error "codex" "error" "No Codex state")")"
+  claude="$(cat "$claude_file" 2>/dev/null || json_error "claude" "error" "No Claude state")"
+  codex="$(cat "$codex_file" 2>/dev/null || json_error "codex" "error" "No Codex state")"
 
   write_state "$claude" "$codex"
   rm -rf "$tmp_dir"
 }
 
 main() {
-  if ! command_exists jq || ! command_exists curl; then
-    printf 'agent-status-daemon requires jq and curl\n' >&2
+  if ! command_exists jq; then
+    printf 'agent-status-daemon requires jq\n' >&2
     exit 1
   fi
 

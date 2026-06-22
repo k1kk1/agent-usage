@@ -19,7 +19,7 @@ Daemon は Codex の取得と Claude statusLine JSON の統合を担当し、Vie
 
 各エージェントの取得は独立しており、1 つが失敗しても他の状態更新を継続します。
 
-初回取得や前回状態も失敗していた場合は、`auth_error`、`offline`、`parse_error` などの status を状態 JSON に書きます。直前に成功した値がある場合は、その値を `stale` として保持し、`message` に今回の失敗理由を残します。
+取得に失敗したエージェントは `offline`、`parse_error` などの status を状態 JSON に書きます。直前の成功値は保持せず、現在の取得結果だけを表示します。
 
 Daemon には操作用サブコマンドがあります。
 
@@ -46,7 +46,7 @@ Claude        20.0%
   7d [████░░░░░░░░░░░░] 06/24 00:00
 ```
 
-取得失敗時はプログレスバーの代わりに `Auth Error`、`Offline`、`Parse Error` を表示します。直前の成功値を保持している `stale` 状態では、プログレスバーを表示したまま `stale` ラベルを付けます。
+取得失敗時はプログレスバーの代わりに `Offline`、`Parse Error` などの status を表示します。
 
 ## 状態 JSON
 
@@ -62,23 +62,23 @@ ${XDG_RUNTIME_DIR:-$HOME/.cache}/agent-status/state.json
 
 ```json
 {
-  "updated_at": "2026-06-21T06:18:41Z",
+  "updated_at": "2026-06-21 15:18:41 JST",
   "agents": {
     "claude": {
       "agent": "claude",
       "label": "Claude Code",
       "status": "ok",
-      "updated_at": "2026-06-21T06:18:41Z",
+      "updated_at": "2026-06-21 15:18:41 JST",
       "windows": {
         "primary": {
           "label": "5h",
           "used_pct": 20,
-          "reset_at": "2026-06-21T08:00:00Z"
+          "reset_at": "2026-06-21 17:00:00 JST"
         },
         "secondary": {
           "label": "7d",
           "used_pct": 35,
-          "reset_at": "2026-06-24T00:00:00Z"
+          "reset_at": "2026-06-24 09:00:00 JST"
         }
       }
     }
@@ -92,9 +92,7 @@ ${XDG_RUNTIME_DIR:-$HOME/.cache}/agent-status/state.json
 
 - 状態ディレクトリは `700`、状態ファイルは `600` で作成します。
 - 状態ファイルは一時ファイルに書き出してから `mv` するため、Viewer が途中書き込みの JSON を読む可能性を下げています。
-- Bearer トークンは `curl -H` のコマンドライン引数に載せず、stdin の curl config として渡します。
-- raw API 応答は既定では保存しません。
-- `AGENT_STATUS_INCLUDE_RAW=1` はデバッグ用途に限定してください。
+- Claude Code は statusLine JSON を読み、OAuth token や非公開 usage API へ直接アクセスしません。
 
 ## ロック
 
@@ -103,10 +101,8 @@ Daemon は `$AGENT_STATUS_STATE_DIR/daemon.lock` ディレクトリを作って�
 ## 依存コマンド
 
 - `bash`
-- `curl`
 - `jq`
 - `bc`
-- `security`
 - `tput`
 
 `jq` と `bc` は Homebrew で入れる想定です。
