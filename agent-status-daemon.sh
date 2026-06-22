@@ -2,11 +2,6 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${AGENT_STATUS_CONFIG_FILE:-$SCRIPT_DIR/agent-status.env}"
-if [[ -r "$CONFIG_FILE" ]]; then
-  # shellcheck disable=SC1090
-  . "$CONFIG_FILE"
-fi
 
 STATE_DIR="${AGENT_STATUS_STATE_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/agent-status}"
 STATE_FILE="${AGENT_STATUS_STATE_FILE:-$STATE_DIR/state.json}"

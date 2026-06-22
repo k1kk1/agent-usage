@@ -6,16 +6,15 @@ Claude Code と Codex の利用枠を cmux/tmux の細いペインに表示す�
 
 ```sh
 brew install jq bc
-./install.sh
 ./agent-status-pane.sh
 ```
 
 `agent-status-pane.sh` を起動すれば、裏側の Daemon も自動で起動します。
 
-うまく表示されないときは診断を実行します。
+うまく表示されないときは、まず状態ファイルを確認します。
 
 ```sh
-./install.sh --doctor
+jq . "$HOME/.cache/agent-status/state.json"
 ```
 
 設定やスクリプトを変更したあと daemon を入れ替える場合:
@@ -24,14 +23,12 @@ brew install jq bc
 ./agent-status-daemon.sh --restart
 ```
 
-## 設定する場所
+## 設定
 
-設定は `install.sh` が作る `agent-status.env` に書きます。cmux 側に長い環境変数を書く必要はありません。
-
-最低限よく触るのはこのあたりです。
+通常は設定不要です。必要な場合だけ環境変数で上書きします。
 
 ```sh
-AGENT_STATUS_BAR_WIDTH=12
+AGENT_STATUS_BAR_WIDTH=12 ./agent-status-pane.sh
 ```
 
 Codex はデフォルトで `codex app-server` を使うので、通常は設定不要です。
@@ -81,10 +78,10 @@ tmux split-window -h -l 48 'cd /Users/kikki/src/agent-usage && ./agent-status-pa
 
 ## ファイル構成
 
-- `agent-status.env`: あなたの設定。Git 管理しません。
-- `agent-status.env.example`: 設定サンプル。
 - `agent-status-daemon.sh`: API を取得して状態 JSON を作る常駐プロセス。
 - `agent-status-pane.sh`: 状態 JSON を表示するペイン用 UI。
+- `claude-status-line.sh`: Claude Code の statusLine から受け取った JSON を保存するスクリプト。
+- `sample/state-*.json`: 表示テスト用の状態 JSON。
 
 状態ファイルは既定で `${XDG_RUNTIME_DIR:-$HOME/.cache}/agent-status/state.json` に作られます。
 

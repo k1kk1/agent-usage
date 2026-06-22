@@ -2,14 +2,6 @@
 
 ## 基本起動
 
-初回だけ設定ファイルを作ります。
-
-```sh
-./install.sh
-```
-
-インストーラは `agent-status.env` を作成し、Claude Code の既存 credentials と Codex app-server コマンドを確認します。以後、設定は `agent-status.env` に書きます。`agent-status-pane.sh` と `agent-status-daemon.sh` は起動時にこのファイルを自動で読み込みます。
-
 Viewer を起動すると、Daemon が未起動の場合は自動でバックグラウンド起動します。
 
 ```sh
@@ -67,7 +59,6 @@ AGENT_STATUS_BAR_WIDTH=12 ./agent-status-pane.sh
 
 | 変数 | 既定値 | 説明 |
 | --- | --- | --- |
-| `AGENT_STATUS_CONFIG_FILE` | `./agent-status.env` | 読み込む設定ファイル |
 | `AGENT_STATUS_STATE_DIR` | `${XDG_RUNTIME_DIR:-$HOME/.cache}/agent-status` | 状態ファイル、ロック、ログを置くディレクトリ |
 | `AGENT_STATUS_STATE_FILE` | `$AGENT_STATUS_STATE_DIR/state.json` | Daemon と Viewer が共有する状態 JSON |
 | `AGENT_STATUS_INTERVAL_SECONDS` | `60` | Daemon の取得間隔 |

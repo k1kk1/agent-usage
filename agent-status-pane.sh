@@ -2,11 +2,6 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${AGENT_STATUS_CONFIG_FILE:-$SCRIPT_DIR/agent-status.env}"
-if [[ -r "$CONFIG_FILE" ]]; then
-  # shellcheck disable=SC1090
-  . "$CONFIG_FILE"
-fi
 
 DAEMON_SCRIPT="${AGENT_STATUS_DAEMON_SCRIPT:-$SCRIPT_DIR/agent-status-daemon.sh}"
 STATE_DIR="${AGENT_STATUS_STATE_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/agent-status}"
@@ -164,6 +159,24 @@ state_value() {
   jq -r "$expr // empty" "$STATE_FILE" 2>/dev/null
 }
 
+error_row() {
+  local name="$1"
+  local status="$2"
+  local message="$3"
+  local label
+
+  case "$status" in
+    offline)     label="Offline" ;;
+    parse_error) label="Parse Error" ;;
+    error)       label="Error" ;;
+    *)           label="$status" ;;
+  esac
+
+  [[ -n "$message" && "$message" != "null" ]] && label="$label: $message"
+
+  printf "%-7.7s ${RED}%s${RESET}" "$name" "$label"
+}
+
 row() {
   local name="$1"
   local window="$2"
@@ -248,18 +261,32 @@ render_starting() {
 
 render_left_lines() {
   local updated="$1"
-  local cc5p="$2" cc5e="$3" cc7p="$4" cc7e="$5"
-  local cx5p="$6" cx5e="$7" cxwp="$8" cxwe="$9"
+  local cc_status="$2" cc_msg="$3"
+  local cc5p="$4" cc5e="$5" cc7p="$6" cc7e="$7"
+  local cx_status="$8" cx_msg="$9"
+  local cx5p="${10}" cx5e="${11}" cxwp="${12}" cxwe="${13}"
   local updated_label="waiting"
 
   [[ -n "$updated" ]] && updated_label="$(fmt_reset "$updated")"
 
   printf '%s\n' "$(printf "${BOLD}${CYAN} Agent Status${RESET}  ${DIM}· updated %s${RESET}" "$updated_label")"
   printf '%s\n' "$(printf "${DIM} ─────────────────────────────────────────${RESET}")"
-  printf '%s\n' "$(row "Claude" "5h" "$cc5p" "$cc5e")"
-  printf '%s\n' "$(row ""       "7d" "$cc7p" "$cc7e")"
-  printf '%s\n' "$(row "Codex"  "5h" "$cx5p" "$cx5e")"
-  printf '%s\n' "$(row ""       "7d" "$cxwp" "$cxwe")"
+
+  if [[ "$cc_status" != "ok" ]]; then
+    printf '%s\n' "$(error_row "Claude" "$cc_status" "$cc_msg")"
+    printf '%s\n' ""
+  else
+    printf '%s\n' "$(row "Claude" "5h" "$cc5p" "$cc5e")"
+    printf '%s\n' "$(row ""       "7d" "$cc7p" "$cc7e")"
+  fi
+
+  if [[ "$cx_status" != "ok" ]]; then
+    printf '%s\n' "$(error_row "Codex" "$cx_status" "$cx_msg")"
+    printf '%s\n' ""
+  else
+    printf '%s\n' "$(row "Codex"  "5h" "$cx5p" "$cx5e")"
+    printf '%s\n' "$(row ""       "7d" "$cxwp" "$cxwe")"
+  fi
 }
 
 render_ports_lines() {
@@ -325,13 +352,19 @@ render_columns() {
 
 render_dashboard() {
   local updated="$1"
-  local cc5p cc5e cc7p cc7e cx5p cx5e cxwp cxwe
+  local cc_status cc_msg cc5p cc5e cc7p cc7e
+  local cx_status cx_msg cx5p cx5e cxwp cxwe
   local left_text right_text left_width
 
+  cc_status="$(state_value '.agents.claude.status')"
+  cc_msg="$(state_value '.agents.claude.message')"
   cc5p="$(state_value '.agents.claude.windows.primary.used_pct')"
   cc5e="$(state_value '.agents.claude.windows.primary.reset_at')"
   cc7p="$(state_value '.agents.claude.windows.secondary.used_pct')"
   cc7e="$(state_value '.agents.claude.windows.secondary.reset_at')"
+
+  cx_status="$(state_value '.agents.codex.status')"
+  cx_msg="$(state_value '.agents.codex.message')"
   cx5p="$(state_value '.agents.codex.windows.primary.used_pct')"
   cx5e="$(state_value '.agents.codex.windows.primary.reset_at')"
   cxwp="$(state_value '.agents.codex.windows.secondary.used_pct')"
@@ -339,8 +372,10 @@ render_dashboard() {
 
   left_text="$(render_left_lines \
     "$updated" \
+    "${cc_status:-ok}" "$cc_msg" \
     "$cc5p" "$cc5e" \
     "$cc7p" "$cc7e" \
+    "${cx_status:-ok}" "$cx_msg" \
     "$cx5p" "$cx5e" \
     "$cxwp" "$cxwe"
   )"

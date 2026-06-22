@@ -1,0 +1,22 @@
+{
+  "updated_at": "2026-06-22 09:00:00 JST",
+  "agents": {
+    "claude": {
+      "agent": "claude",
+      "label": "Claude Code",
+      "status": "offline",
+      "message": "Claude statusLine JSON not found",
+      "updated_at": "2026-06-22 09:00:00 JST",
+      "windows": {}
+    },
+    "codex": {
+      "agent": "codex",
+      "label": "Codex",
+      "status": "parse_error",
+      "message": "Codex rate-limit response was not found",
+      "updated_at": "2026-06-22 09:00:00 JST",
+      "windows": {}
+    }
+  },
+  "ports": []
+}
