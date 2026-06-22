@@ -16,6 +16,20 @@ Viewer を起動すると、Daemon が未起動の場合は自動でバックグ
 ./agent-status-pane.sh
 ```
 
+表示だけを確認したい場合は、テスト用の state JSON を渡すと Daemon を起動せず 1 回だけ描画します。
+
+```sh
+./agent-status-pane.sh --test ./path/to/state.json
+```
+
+利用率は 50% 未満が緑、50% 以上が黄、80% 以上が赤で表示されます。サンプル state で確認できます。
+
+```sh
+./agent-status-pane.sh --test sample/state-low.json
+./agent-status-pane.sh --test sample/state-medium.json
+./agent-status-pane.sh --test sample/state-high.json
+```
+
 Daemon だけを 1 回実行して状態 JSON を作る場合:
 
 ```sh

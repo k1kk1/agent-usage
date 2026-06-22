@@ -1,0 +1,48 @@
+{
+  "updated_at": "2026-06-22 09:00:00 JST",
+  "agents": {
+    "claude": {
+      "agent": "claude",
+      "label": "Claude Code",
+      "status": "ok",
+      "updated_at": "2026-06-22 09:00:00 JST",
+      "windows": {
+        "primary": {
+          "label": "5h",
+          "used_pct": 12,
+          "reset_at": "2026-06-22 13:00:00 JST"
+        },
+        "secondary": {
+          "label": "7d",
+          "used_pct": 34,
+          "reset_at": "2026-06-28 09:00:00 JST"
+        }
+      }
+    },
+    "codex": {
+      "agent": "codex",
+      "label": "Codex",
+      "status": "ok",
+      "updated_at": "2026-06-22 09:00:00 JST",
+      "windows": {
+        "primary": {
+          "label": "5h",
+          "used_pct": 25,
+          "reset_at": "2026-06-22 14:00:00 JST"
+        },
+        "secondary": {
+          "label": "7d",
+          "used_pct": 49,
+          "reset_at": "2026-06-28 10:00:00 JST"
+        }
+      }
+    }
+  },
+  "ports": [
+    {
+      "port": 3000,
+      "command": "vite",
+      "cwd": "/Users/kikki/src/agent-usage"
+    }
+  ]
+}

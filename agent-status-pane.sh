@@ -17,15 +17,60 @@ DAEMON_LOG="${AGENT_STATUS_DAEMON_LOG:-$STATE_DIR/daemon.log}"
 BAR_WIDTH="${AGENT_STATUS_BAR_WIDTH:-16}"
 SLEEP_PID=""
 LAST_RENDERED_UPDATED_AT=""
+TEST_MODE=0
 
 BOLD=$'\033[1m'
 DIM=$'\033[2m'
 CYAN=$'\033[36m'
 GREEN=$'\033[32m'
+AMBER=$'\033[33m'
+RED=$'\033[31m'
 RESET=$'\033[0m'
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
+}
+
+usage() {
+  cat <<EOF
+Usage:
+  ./agent-status-pane.sh
+  ./agent-status-pane.sh --test STATE_JSON
+
+Options:
+  --test STATE_JSON   Render the given state JSON once without starting daemon.
+  --help              Show this help.
+EOF
+}
+
+parse_args() {
+  while (($# > 0)); do
+    case "$1" in
+      --test|--file|--state-file)
+        if [[ -z "${2:-}" ]]; then
+          printf '%s requires a file path\n' "$1" >&2
+          exit 2
+        fi
+        STATE_FILE="$2"
+        TEST_MODE=1
+        shift 2
+        ;;
+      --help|-h)
+        usage
+        exit 0
+        ;;
+      -*)
+        printf 'unknown option: %s\n' "$1" >&2
+        usage >&2
+        exit 2
+        ;;
+      *)
+        STATE_FILE="$1"
+        TEST_MODE=1
+        shift
+        ;;
+    esac
+  done
 }
 
 daemon_lock_is_live() {
@@ -70,12 +115,33 @@ fmt_reset() {
   fi
 }
 
+ansi_for() {
+  local pct="$1"
+  local whole
+
+  if [[ ! "$pct" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    printf '%s' "$RESET"
+    return
+  fi
+
+  whole="${pct%%.*}"
+  if ((whole >= 80)); then
+    printf '%s' "$RED"
+  elif ((whole >= 50)); then
+    printf '%s' "$AMBER"
+  else
+    printf '%s' "$GREEN"
+  fi
+}
+
 progress_bar() {
   local pct="$1"
-  local filled empty
+  local filled empty color
 
   if [[ -z "$pct" || "$pct" == "null" || ! "$pct" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    printf '%s' "$DIM"
     printf '%*s' "$BAR_WIDTH" '' | tr ' ' '░'
+    printf '%s' "$RESET"
     return
   fi
 
@@ -84,9 +150,13 @@ progress_bar() {
   (( filled < 0 )) && filled=0
   (( filled > BAR_WIDTH )) && filled="$BAR_WIDTH"
   empty=$((BAR_WIDTH - filled))
+  color="$(ansi_for "$pct")"
 
+  printf '%s' "$color"
   printf '%*s' "$filled" '' | tr ' ' '█'
+  printf '%s' "$DIM"
   printf '%*s' "$empty" '' | tr ' ' '░'
+  printf '%s' "$RESET"
 }
 
 state_value() {
@@ -99,16 +169,19 @@ row() {
   local window="$2"
   local pct="$3"
   local expires="$4"
+  local color="$RESET"
   local pct_label="--.-%"
 
   if [[ "$pct" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    color="$(ansi_for "$pct")"
     pct_label="$(printf '%4.1f%%' "$pct")"
   fi
 
-  printf "%-7.7s ${DIM}%-2.2s${RESET} [%s] %6s ${DIM}%s${RESET}" \
+  printf "%-7.7s ${DIM}%-2.2s${RESET} [%s] %s%6s${RESET} ${DIM}%s${RESET}" \
     "$name" \
     "$window" \
     "$(progress_bar "$pct")" \
+    "$color" \
     "$pct_label" \
     "$(fmt_reset "$expires")"
 }
@@ -284,10 +357,17 @@ draw() {
   local updated
 
   tput civis 2>/dev/null || true
-  ensure_daemon
+  if ((TEST_MODE == 0)); then
+    ensure_daemon
+  fi
 
   if [[ ! -f "$STATE_FILE" ]]; then
-    render_starting
+    if ((TEST_MODE == 1)); then
+      printf 'state file not found: %s\n' "$STATE_FILE" >&2
+      return 1
+    else
+      render_starting
+    fi
     return
   fi
 
@@ -320,6 +400,8 @@ sleep_for_refresh() {
 }
 
 main() {
+  parse_args "$@"
+
   if ! command_exists jq || ! command_exists bc; then
     printf 'agent-status-pane requires jq and bc\n' >&2
     exit 1
@@ -327,6 +409,11 @@ main() {
 
   trap cleanup EXIT
   trap stop_pane INT TERM
+
+  if ((TEST_MODE == 1)); then
+    draw
+    exit $?
+  fi
 
   while :; do
     draw

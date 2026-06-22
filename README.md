@@ -34,7 +34,7 @@ brew install jq bc
 AGENT_STATUS_BAR_WIDTH=12
 ```
 
-Codex はデフォルトで `codex app-server` を使うので、通常は設定不要です。Claude Code は通常 `~/.claude/.credentials.json` または既定の Keychain 検索から認証情報を読みます。必要な場合だけ `agent-status.env` に追記します。
+Codex はデフォルトで `codex app-server` を使うので、通常は設定不要です。
 
 Claude Code は statusLine から渡される JSON を読みます。Claude Code の設定に次を追加してください。
 
@@ -46,6 +46,22 @@ Claude Code は statusLine から渡される JSON を読みます。Claude Code
     "refreshInterval": 5
   }
 }
+```
+
+## テスト表示
+
+テスト用の state JSON を渡すと、Daemon を起動せず 1 回だけ描画できます。
+
+```sh
+./agent-status-pane.sh --test ./path/to/state.json
+```
+
+利用率ごとの色を確認するサンプル:
+
+```sh
+./agent-status-pane.sh --test sample/state-low.json
+./agent-status-pane.sh --test sample/state-medium.json
+./agent-status-pane.sh --test sample/state-high.json
 ```
 
 ## cmux で起動する
