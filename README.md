@@ -85,6 +85,40 @@ tmux split-window -h -l 48 'cd /Users/kikki/src/agent-usage && ./agent-status-pa
 
 状態ファイルは既定で `${XDG_RUNTIME_DIR:-$HOME/.cache}/agent-status/state.json` に作られます。
 
+## 仕組み
+
+```
+pane 起動
+  └─ daemon を自動起動（多重起動は PID チェックで防止）
+       └─ 60 秒ごとに収集
+            ├─ Claude 使用量を並列取得
+            └─ Codex 使用量を並列取得
+                 └─ state.json にアトミック書き込み（tmp → mv）
+
+pane
+  └─ 3 秒ごとに state.json を読み込んで描画
+```
+
+### Claude 使用量の取得
+
+`claude-status-line.sh` が Claude Code の statusLine フックから受け取った JSON を `claude-status.json` に保存しています。daemon はこのファイルを jq でパースして 5h/7d の利用率を取り出します。
+
+statusLine の仕様: https://code.claude.com/docs/ja/statusline
+
+### Codex 使用量の取得
+
+`codex app-server` プロセスに JSON-RPC で `account/rateLimits/read` を送り、レスポンスから利用率を取り出します。
+
+### エラー時の挙動
+
+取得に失敗した場合、daemon は `status: "offline"` / `"parse_error"` / `"error"` を state.json に書きます。pane はこれを読んでクォータバーの代わりに赤字でエラー内容を表示します。
+
+エラー状態のサンプルで確認できます。
+
+```sh
+./agent-status-pane.sh --test sample/state-offline.json
+```
+
 ## 詳細
 
 - [設定と利用方法](docs/configuration.md)
