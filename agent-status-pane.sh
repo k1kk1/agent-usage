@@ -16,10 +16,14 @@ TEST_MODE=0
 
 BOLD=$'\033[1m'
 DIM=$'\033[2m'
-CYAN=$'\033[36m'
-GREEN=$'\033[32m'
-AMBER=$'\033[33m'
-RED=$'\033[31m'
+
+# Soft but readable 256-color palette
+CYAN=$'\033[38;5;81m'    # cyan: 元色より少し柔らかい
+GREEN=$'\033[38;5;77m'   # green: パステルより見やすい
+AMBER=$'\033[38;5;220m'  # amber: 黄色すぎず警告感あり
+RED=$'\033[38;5;203m'    # red: 強すぎない赤
+MUTED=$'\033[38;5;245m'  # empty bar / subtle text
+
 RESET=$'\033[0m'
 
 command_exists() {
@@ -151,7 +155,7 @@ progress_bar() {
   local filled empty color
 
   if [[ -z "$pct" || "$pct" == "null" || ! "$pct" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-    printf '%s' "$DIM"
+    printf '%s' "$MUTED"
     printf '%*s' "$BAR_WIDTH" '' | tr ' ' '░'
     printf '%s' "$RESET"
     return
@@ -168,7 +172,7 @@ progress_bar() {
 
   printf '%s' "$color"
   printf '%*s' "$filled" '' | tr ' ' '█'
-  printf '%s' "$DIM"
+  printf '%s' "$MUTED"
   printf '%*s' "$empty" '' | tr ' ' '░'
   printf '%s' "$RESET"
 }
