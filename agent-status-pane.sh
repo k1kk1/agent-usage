@@ -11,7 +11,7 @@ REFRESH_SECONDS="${AGENT_STATUS_PANE_REFRESH_SECONDS:-3}"
 DAEMON_LOG="${AGENT_STATUS_DAEMON_LOG:-$STATE_DIR/daemon.log}"
 BAR_WIDTH="${AGENT_STATUS_BAR_WIDTH:-16}"
 SLEEP_PID=""
-LAST_RENDERED_UPDATED_AT=""
+LAST_RENDERED_STATE_HASH=""
 TEST_MODE=0
 
 BOLD=$'\033[1m'
@@ -70,9 +70,12 @@ parse_args() {
 
 daemon_lock_is_live() {
   local pid
+
   [[ -d "$LOCK_DIR" ]] || return 1
+
   pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+
   kill -0 "$pid" 2>/dev/null
 }
 
@@ -98,8 +101,9 @@ ensure_daemon() {
 
 fmt_reset() {
   local value="$1"
+
   if [[ -z "$value" || "$value" == "null" ]]; then
-    printf '--:--'
+    printf -- '--:--'
     return
   fi
 
@@ -120,6 +124,7 @@ ansi_for() {
   fi
 
   whole="${pct%%.*}"
+
   if ((whole >= 80)); then
     printf '%s' "$RED"
   elif ((whole >= 50)); then
@@ -127,6 +132,18 @@ ansi_for() {
   else
     printf '%s' "$GREEN"
   fi
+}
+
+progress_filled() {
+  local pct="$1"
+
+  jq -nr \
+    --arg pct "$pct" \
+    --argjson width "$BAR_WIDTH" '
+      ($pct | tonumber? // 0) as $p
+      | (($p * $width / 100) | floor)
+      | if . < 0 then 0 elif . > $width then $width else . end
+    ' 2>/dev/null
 }
 
 progress_bar() {
@@ -140,10 +157,12 @@ progress_bar() {
     return
   fi
 
-  filled="$(printf 'scale=0; (%s * %s / 100) / 1\n' "$pct" "$BAR_WIDTH" | bc 2>/dev/null)"
+  filled="$(progress_filled "$pct")"
   [[ "$filled" =~ ^[0-9]+$ ]] || filled=0
+
   (( filled < 0 )) && filled=0
   (( filled > BAR_WIDTH )) && filled="$BAR_WIDTH"
+
   empty=$((BAR_WIDTH - filled))
   color="$(ansi_for "$pct")"
 
@@ -159,6 +178,20 @@ state_value() {
   jq -r "$expr // empty" "$STATE_FILE" 2>/dev/null
 }
 
+state_hash() {
+  local json
+
+  json="$(jq -cS . "$STATE_FILE" 2>/dev/null)" || return 1
+
+  if command_exists shasum; then
+    printf '%s' "$json" | shasum | awk '{print $1}'
+  elif command_exists sha256sum; then
+    printf '%s' "$json" | sha256sum | awk '{print $1}'
+  else
+    printf '%s' "$json" | cksum | awk '{print $1 ":" $2}'
+  fi
+}
+
 error_row() {
   local name="$1"
   local status="$2"
@@ -169,6 +202,7 @@ error_row() {
     offline)     label="Offline" ;;
     parse_error) label="Parse Error" ;;
     error)       label="Error" ;;
+    "")          label="Unknown" ;;
     *)           label="$status" ;;
   esac
 
@@ -199,162 +233,40 @@ row() {
     "$(fmt_reset "$expires")"
 }
 
-strip_ansi() {
-  sed $'s/\033\\[[0-9;]*[[:alpha:]]//g'
-}
-
-vlen() {
-  printf '%s' "$1" | strip_ansi | wc -m | tr -d ' '
-}
-
-pad_to() {
-  local text="$1"
-  local width="$2"
-  local len pad
-
-  len="$(vlen "$text")"
-  pad=$((width - len))
-  ((pad < 0)) && pad=0
-  printf '%s%*s' "$text" "$pad" ''
-}
-
-label_path() {
-  local path="$1"
-  case "$path" in
-    "$HOME") printf '~' ;;
-    "$HOME"/*) printf '~/%s' "${path#"$HOME"/}" ;;
-    *) printf '%s' "$path" ;;
-  esac
-}
-
-shorten_path() {
-  local path="$1"
-  local width="$2"
-  local len
-
-  len="$(vlen "$path")"
-  if ((len <= width)); then
-    printf '%s' "$path"
-  elif ((width <= 1)); then
-    printf '…'
-  else
-    printf '…%s' "${path: -$((width - 1))}"
-  fi
-}
-
-clear_remaining_lines() {
-  local used="$1"
-  local lines i
-
-  lines="${LINES:-$(tput lines 2>/dev/null || echo 24)}"
-  for ((i = used; i < lines; i++)); do
-    printf '\033[K\n'
-  done
+clear_to_end() {
+  printf '\033[J'
 }
 
 render_starting() {
+  local log_tail=""
+
+  if [[ -f "$DAEMON_LOG" ]]; then
+    log_tail="$(tail -n 3 "$DAEMON_LOG" 2>/dev/null || true)"
+  fi
+
   printf '\033[H'
   printf "${BOLD}${CYAN} Agent Status${RESET} ${DIM}· starting daemon...${RESET}\033[K\n"
   printf "${DIM}state: %s${RESET}\033[K\n" "$STATE_FILE"
-  clear_remaining_lines 2
-}
 
-render_left_lines() {
-  local updated="$1"
-  local cc_status="$2" cc_msg="$3"
-  local cc5p="$4" cc5e="$5" cc7p="$6" cc7e="$7"
-  local cx_status="$8" cx_msg="$9"
-  local cx5p="${10}" cx5e="${11}" cxwp="${12}" cxwe="${13}"
-  local updated_label="waiting"
-
-  [[ -n "$updated" ]] && updated_label="$(fmt_reset "$updated")"
-
-  printf '%s\n' "$(printf "${BOLD}${CYAN} Agent Status${RESET}  ${DIM}· updated %s${RESET}" "$updated_label")"
-  printf '%s\n' "$(printf "${DIM} ─────────────────────────────────────────${RESET}")"
-
-  if [[ "$cc_status" != "ok" ]]; then
-    printf '%s\n' "$(error_row "Claude" "$cc_status" "$cc_msg")"
-    printf '%s\n' ""
-  else
-    printf '%s\n' "$(row "Claude" "5h" "$cc5p" "$cc5e")"
-    printf '%s\n' "$(row ""       "7d" "$cc7p" "$cc7e")"
+  if [[ -n "$log_tail" ]]; then
+    printf "\033[K\n"
+    printf "${DIM}daemon log:${RESET}\033[K\n"
+    while IFS= read -r line; do
+      printf "${RED}%s${RESET}\033[K\n" "$line"
+    done <<<"$log_tail"
   fi
 
-  if [[ "$cx_status" != "ok" ]]; then
-    printf '%s\n' "$(error_row "Codex" "$cx_status" "$cx_msg")"
-    printf '%s\n' ""
-  else
-    printf '%s\n' "$(row "Codex"  "5h" "$cx5p" "$cx5e")"
-    printf '%s\n' "$(row ""       "7d" "$cxwp" "$cxwe")"
-  fi
-}
-
-render_ports_lines() {
-  local left_width="$1"
-  local ports cols avail p c w
-
-  ports="$(jq -r '.ports[]? | [.port, .command, .cwd] | @tsv' "$STATE_FILE" 2>/dev/null)"
-  [[ -z "$ports" ]] && return
-
-  cols="${COLUMNS:-$(tput cols 2>/dev/null || echo 120)}"
-  avail=$((cols - left_width - 23))
-  ((avail < 8)) && avail=8
-
-  printf '%s\n' "$(printf "${DIM}ports${RESET}")"
-
-  while IFS=$'\t' read -r p c w; do
-    [[ -z "$p" ]] && continue
-    printf '%s\n' "$(
-      printf "${GREEN}%-6.6s${RESET} ${DIM}%-15.15s${RESET} %s" \
-        "$p" \
-        "$c" \
-        "$(shorten_path "$(label_path "$w")" "$avail")"
-    )"
-  done <<<"$ports"
-}
-
-calc_lines_width() {
-  local line max=0 len
-
-  while IFS= read -r line; do
-    len="$(vlen "$line")"
-    ((len > max)) && max="$len"
-  done
-
-  printf '%s' "$max"
-}
-
-render_columns() {
-  local left_text="$1"
-  local right_text="$2"
-  local left_width="$3"
-  local left_count right_count n i left_line right_line
-
-  left_count="$(printf '%s\n' "$left_text" | wc -l | tr -d ' ')"
-  right_count=0
-  [[ -n "$right_text" ]] && right_count="$(printf '%s\n' "$right_text" | wc -l | tr -d ' ')"
-  n="$left_count"
-  ((right_count > n)) && n="$right_count"
-
-  printf '\033[H'
-
-  for ((i = 1; i <= n; i++)); do
-    left_line="$(printf '%s\n' "$left_text" | sed -n "${i}p")"
-    right_line=""
-    [[ -n "$right_text" ]] && right_line="$(printf '%s\n' "$right_text" | sed -n "${i}p")"
-    printf '%s%s\033[K\n' \
-      "$(pad_to "$left_line" "$left_width")" \
-      "$right_line"
-  done
-
-  clear_remaining_lines "$n"
+  clear_to_end
 }
 
 render_dashboard() {
   local updated="$1"
+  local updated_label="waiting"
+
   local cc_status cc_msg cc5p cc5e cc7p cc7e
   local cx_status cx_msg cx5p cx5e cxwp cxwe
-  local left_text right_text left_width
+
+  [[ -n "$updated" ]] && updated_label="$(fmt_reset "$updated")"
 
   cc_status="$(state_value '.agents.claude.status')"
   cc_msg="$(state_value '.agents.claude.message')"
@@ -370,28 +282,34 @@ render_dashboard() {
   cxwp="$(state_value '.agents.codex.windows.secondary.used_pct')"
   cxwe="$(state_value '.agents.codex.windows.secondary.reset_at')"
 
-  left_text="$(render_left_lines \
-    "$updated" \
-    "${cc_status:-ok}" "$cc_msg" \
-    "$cc5p" "$cc5e" \
-    "$cc7p" "$cc7e" \
-    "${cx_status:-ok}" "$cx_msg" \
-    "$cx5p" "$cx5e" \
-    "$cxwp" "$cxwe"
-  )"
+  printf '\033[H'
+  printf "${BOLD}${CYAN} Agent Status${RESET}  ${DIM}· updated %s${RESET}\033[K\n" "$updated_label"
+  printf "${DIM} ─────────────────────────────────────────${RESET}\033[K\n"
 
-  left_width="$(calc_lines_width <<<"$left_text")"
-  left_width=$((left_width + 3))
+  if [[ "${cc_status:-ok}" != "ok" ]]; then
+    printf '%s\033[K\n' "$(error_row "Claude" "$cc_status" "$cc_msg")"
+    printf '\033[K\n'
+  else
+    printf '%s\033[K\n' "$(row "Claude" "5h" "$cc5p" "$cc5e")"
+    printf '%s\033[K\n' "$(row ""       "7d" "$cc7p" "$cc7e")"
+  fi
 
-  right_text="$(render_ports_lines "$left_width")"
+  if [[ "${cx_status:-ok}" != "ok" ]]; then
+    printf '%s\033[K\n' "$(error_row "Codex" "$cx_status" "$cx_msg")"
+    printf '\033[K\n'
+  else
+    printf '%s\033[K\n' "$(row "Codex"  "5h" "$cx5p" "$cx5e")"
+    printf '%s\033[K\n' "$(row ""       "7d" "$cxwp" "$cxwe")"
+  fi
 
-  render_columns "$left_text" "$right_text" "$left_width"
+  clear_to_end
 }
 
 draw() {
-  local updated
+  local updated current_hash
 
   tput civis 2>/dev/null || true
+
   if ((TEST_MODE == 0)); then
     ensure_daemon
   fi
@@ -406,12 +324,21 @@ draw() {
     return
   fi
 
-  updated="$(state_value '.updated_at')"
-  if [[ -n "$updated" && "$updated" == "$LAST_RENDERED_UPDATED_AT" ]]; then
+  current_hash="$(state_hash)" || {
+    printf '\033[H'
+    printf "${BOLD}${CYAN} Agent Status${RESET} ${RED}· invalid state json${RESET}\033[K\n"
+    printf "${DIM}state: %s${RESET}\033[K\n" "$STATE_FILE"
+    clear_to_end
+    return
+  }
+
+  if [[ -n "$current_hash" && "$current_hash" == "$LAST_RENDERED_STATE_HASH" ]]; then
     return
   fi
 
-  LAST_RENDERED_UPDATED_AT="$updated"
+  LAST_RENDERED_STATE_HASH="$current_hash"
+
+  updated="$(state_value '.updated_at')"
   render_dashboard "$updated"
 }
 
@@ -419,6 +346,7 @@ cleanup() {
   if [[ -n "${SLEEP_PID:-}" ]]; then
     kill "$SLEEP_PID" 2>/dev/null || true
   fi
+
   tput cnorm 2>/dev/null || true
 }
 
@@ -437,8 +365,8 @@ sleep_for_refresh() {
 main() {
   parse_args "$@"
 
-  if ! command_exists jq || ! command_exists bc; then
-    printf 'agent-status-pane requires jq and bc\n' >&2
+  if ! command_exists jq; then
+    printf 'agent-status-pane requires jq\n' >&2
     exit 1
   fi
 
