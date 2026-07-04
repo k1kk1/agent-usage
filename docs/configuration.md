@@ -89,6 +89,8 @@ Claude Code の設定ファイルに statusLine コマンドを追加してく�
 ${XDG_RUNTIME_DIR:-$HOME/.cache}/agent-status/claude-status.json
 ```
 
+同時に、モデル、作業ディレクトリ、git ブランチ、セッションコスト、およびコンテキスト・5h・7d 使用率を色付きの2行 statusline として出力します。利用率は 50% 未満が緑、50% 以上が黄、80% 以上が赤です。バー幅は `CLAUDE_STATUS_BAR_WIDTH`（既定 `8`、最大 `24`）で変更できます。
+
 Daemon はその JSON から以下を読みます。
 
 ```text

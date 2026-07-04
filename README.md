@@ -103,6 +103,8 @@ pane
 
 `claude-status-line.sh` が Claude Code の statusLine フックから受け取った JSON を `claude-status.json` に保存しています。daemon はこのファイルを jq でパースして 5h/7d の利用率を取り出します。
 
+statusline 自体にも、モデル、ディレクトリ、git ブランチ、セッションコストと、コンテキスト・5h・7d の使用率バーを2行で表示します。バー幅は `CLAUDE_STATUS_BAR_WIDTH`（既定 `8`）で変更できます。
+
 statusLine の仕様: https://code.claude.com/docs/ja/statusline
 
 ### Codex 使用量の取得
