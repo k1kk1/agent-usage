@@ -182,6 +182,26 @@ state_value() {
   jq -r "$expr // empty" "$STATE_FILE" 2>/dev/null
 }
 
+# 枠は 5h/7d 固定ではない。primary / secondary を先頭にしつつ、
+# 将来増える枠も取りこぼさず TSV で取り出す。
+state_windows() {
+  local agent="$1"
+
+  jq -r --arg agent "$agent" '
+    (.agents[$agent].windows // {})
+    | to_entries
+    | sort_by([
+        (if .key == "primary" then 0
+         elif .key == "secondary" then 1
+         else 2 end),
+        .key
+      ])
+    | .[]
+    | [(.value.label // .key), (.value.used_pct // ""), (.value.reset_at // "")]
+    | @tsv
+  ' "$STATE_FILE" 2>/dev/null
+}
+
 state_hash() {
   local json
 
@@ -206,6 +226,7 @@ error_row() {
     offline)     label="Offline" ;;
     parse_error) label="Parse Error" ;;
     error)       label="Error" ;;
+    no_windows)  label="No Quota Windows" ;;
     "")          label="Unknown" ;;
     *)           label="$status" ;;
   esac
@@ -228,13 +249,41 @@ row() {
     pct_label="$(printf '%4.1f%%' "$pct")"
   fi
 
-  printf "%-7.7s ${DIM}%-2.2s${RESET} [%s] %s%6s${RESET} ${DIM}%s${RESET}" \
+  # ラベルは "5h" "7d" のほか "30m" のような 3 桁もありうる。
+  printf "%-7.7s ${DIM}%-3.3s${RESET} [%s] %s%6s${RESET} ${DIM}%s${RESET}" \
     "$name" \
     "$window" \
     "$(progress_bar "$pct")" \
     "$color" \
     "$pct_label" \
     "$(fmt_reset "$expires")"
+}
+
+# エージェント 1 つ分を描画する。エラー時と、枠が 1 つも無い時は 1 行にまとめる。
+agent_block() {
+  local name="$1"
+  local agent="$2"
+  local status message windows first="$name"
+
+  status="$(state_value ".agents.$agent.status")"
+  message="$(state_value ".agents.$agent.message")"
+
+  if [[ "${status:-ok}" != "ok" ]]; then
+    printf '%s\033[K\n' "$(error_row "$name" "$status" "$message")"
+    return
+  fi
+
+  windows="$(state_windows "$agent")"
+  if [[ -z "$windows" ]]; then
+    printf '%s\033[K\n' "$(error_row "$name" "no_windows" "")"
+    return
+  fi
+
+  local label pct expires
+  while IFS=$'\t' read -r label pct expires; do
+    printf '%s\033[K\n' "$(row "$first" "$label" "$pct" "$expires")"
+    first=""
+  done <<<"$windows"
 }
 
 clear_to_end() {
@@ -267,44 +316,14 @@ render_dashboard() {
   local updated="$1"
   local updated_label="waiting"
 
-  local cc_status cc_msg cc5p cc5e cc7p cc7e
-  local cx_status cx_msg cx5p cx5e cxwp cxwe
-
   [[ -n "$updated" ]] && updated_label="$(fmt_reset "$updated")"
-
-  cc_status="$(state_value '.agents.claude.status')"
-  cc_msg="$(state_value '.agents.claude.message')"
-  cc5p="$(state_value '.agents.claude.windows.primary.used_pct')"
-  cc5e="$(state_value '.agents.claude.windows.primary.reset_at')"
-  cc7p="$(state_value '.agents.claude.windows.secondary.used_pct')"
-  cc7e="$(state_value '.agents.claude.windows.secondary.reset_at')"
-
-  cx_status="$(state_value '.agents.codex.status')"
-  cx_msg="$(state_value '.agents.codex.message')"
-  cx5p="$(state_value '.agents.codex.windows.primary.used_pct')"
-  cx5e="$(state_value '.agents.codex.windows.primary.reset_at')"
-  cxwp="$(state_value '.agents.codex.windows.secondary.used_pct')"
-  cxwe="$(state_value '.agents.codex.windows.secondary.reset_at')"
 
   printf '\033[H'
   printf "${BOLD}${CYAN} Agent Status${RESET}  ${DIM}· updated %s${RESET}\033[K\n" "$updated_label"
   printf "${DIM} ─────────────────────────────────────────${RESET}\033[K\n"
 
-  if [[ "${cc_status:-ok}" != "ok" ]]; then
-    printf '%s\033[K\n' "$(error_row "Claude" "$cc_status" "$cc_msg")"
-    printf '\033[K\n'
-  else
-    printf '%s\033[K\n' "$(row "Claude" "5h" "$cc5p" "$cc5e")"
-    printf '%s\033[K\n' "$(row ""       "7d" "$cc7p" "$cc7e")"
-  fi
-
-  if [[ "${cx_status:-ok}" != "ok" ]]; then
-    printf '%s\033[K\n' "$(error_row "Codex" "$cx_status" "$cx_msg")"
-    printf '\033[K\n'
-  else
-    printf '%s\033[K\n' "$(row "Codex"  "5h" "$cx5p" "$cx5e")"
-    printf '%s\033[K\n' "$(row ""       "7d" "$cxwp" "$cxwe")"
-  fi
+  agent_block "Claude" "claude"
+  agent_block "Codex" "codex"
 
   clear_to_end
 }

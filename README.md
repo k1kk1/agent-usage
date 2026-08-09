@@ -5,11 +5,23 @@ Claude Code と Codex の利用枠を cmux/tmux の細いペインに表示す�
 ## まず使う
 
 ```sh
-brew install jq bc
+brew install jq
 ./agent-status-pane.sh
 ```
 
 `agent-status-pane.sh` を起動すれば、裏側の Daemon も自動で起動します。
+
+## macOS アプリとウィジェット
+
+通常の macOS アプリ、メニューバー表示、WidgetKit 拡張のソースは [macos/AgentUsage](macos/AgentUsage) にあります。アプリは Dock から起動でき、メニューバーには最も高い使用率を `Claude Code 33%` または `Codex 33%` の形で表示します。クリックすると全利用枠を確認できます。WidgetKit 拡張はデスクトップの小・中・大ウィジェットに対応します。
+
+```sh
+brew install xcodegen
+cd macos/AgentUsage
+./install.sh
+```
+
+インストール後、デスクトップで「ウィジェットを編集」を開き、`Agent Usage` を追加してください。
 
 うまく表示されないときは、まず状態ファイルを確認します。
 
@@ -22,6 +34,14 @@ jq . "$HOME/.cache/agent-status/state.json"
 ```sh
 ./agent-status-daemon.sh --restart
 ```
+
+アプリとウィジェットだけを使う場合は、daemon をログイン中に単一起動する LaunchAgent も登録できます。
+
+```sh
+bash macos/AgentUsage/install-daemon-launch-agent.sh
+```
+
+解除する場合は `bash macos/AgentUsage/install-daemon-launch-agent.sh --uninstall` を実行します。
 
 ## 設定
 
@@ -80,6 +100,7 @@ tmux split-window -h -l 48 'cd /Users/kikki/src/agent-usage && ./agent-status-pa
 
 - `agent-status-daemon.sh`: API を取得して状態 JSON を作る常駐プロセス。
 - `agent-status-pane.sh`: 状態 JSON を表示するペイン用 UI。
+- `macos/AgentUsage/`: macOS メニューバーアプリと WidgetKit 拡張。
 - `claude-status-line.sh`: Claude Code の statusLine から受け取った JSON を保存するスクリプト。
 - `sample/state-*.json`: 表示テスト用の状態 JSON。
 
@@ -96,7 +117,7 @@ pane 起動
                  └─ state.json にアトミック書き込み（tmp → mv）
 
 pane
-  └─ 3 秒ごとに state.json を読み込んで描画
+  └─ 3 秒ごとにstate.jsonのハッシュだけを確認し、変化時だけ描画
 ```
 
 ### Claude 使用量の取得
@@ -125,3 +146,9 @@ statusLine の仕様: https://code.claude.com/docs/ja/statusline
 
 - [設定と利用方法](docs/configuration.md)
 - [仕様と内部設計](docs/specification.md)
+
+## テスト
+
+```sh
+bash tests/run.sh
+```

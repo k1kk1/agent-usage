@@ -1,1 +1,4 @@
 .vscode/**
+.DS_Store
+macos/AgentUsage/build/
+macos/AgentUsage/AgentUsage.xcodeproj/

@@ -10,9 +10,14 @@ chmod 700 "$STATE_DIR" 2>/dev/null || true
 
 input_json="$(cat)"
 tmp_file="$(mktemp "$STATE_DIR/claude-status.XXXXXX")" || exit 0
+cleanup_tmp_file() {
+  [[ -n "${tmp_file:-}" ]] && rm -f "$tmp_file"
+}
+trap cleanup_tmp_file EXIT INT TERM
 printf '%s\n' "$input_json" >"$tmp_file"
 chmod 600 "$tmp_file" 2>/dev/null || true
 mv "$tmp_file" "$CLAUDE_STATUS_FILE"
+tmp_file=""
 
 command -v jq >/dev/null 2>&1 || {
   printf 'Claude Code · jq is required\n'

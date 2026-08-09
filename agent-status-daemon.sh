@@ -11,8 +11,11 @@ INTERVAL_SECONDS="${AGENT_STATUS_INTERVAL_SECONDS:-60}"
 CLAUDE_STATUS_FILE="${CLAUDE_STATUS_FILE:-$STATE_DIR/claude-status.json}"
 
 CODEX_APP_SERVER_COMMAND="${CODEX_APP_SERVER_COMMAND:-codex app-server}"
+# Codex app-server はstdinを即時に閉じると応答前に終了するため、
+# JSON-RPC応答を待つための保持時間を設定する。
 CODEX_APP_SERVER_WAIT_SECONDS="${CODEX_APP_SERVER_WAIT_SECONDS:-10}"
 CODEX_RATE_LIMIT_METHOD="${CODEX_RATE_LIMIT_METHOD:-account/rateLimits/read}"
+LOCK_OWNER_BASHPID=""
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
@@ -72,18 +75,18 @@ stop_daemon() {
   local pid
   pid="$(daemon_pid)"
 
-  if daemon_is_live; then
+  if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
     kill "$pid" 2>/dev/null || return 1
     local i
     for i in 1 2 3 4 5; do
       sleep 1
-      daemon_is_live || break
+      kill -0 "$pid" 2>/dev/null || break
     done
-    if daemon_is_live; then
+    if kill -0 "$pid" 2>/dev/null; then
       kill -TERM "$pid" 2>/dev/null || true
       sleep 1
     fi
-    if daemon_is_live; then
+    if kill -0 "$pid" 2>/dev/null; then
       kill -KILL "$pid" 2>/dev/null || true
       sleep 1
     fi
@@ -169,10 +172,14 @@ fetch_claude_usage() {
 
 fetch_codex_usage() {
   local init_request rate_limit_request output response
+  if ! [[ "$CODEX_APP_SERVER_WAIT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    CODEX_APP_SERVER_WAIT_SECONDS=10
+  fi
   init_request="$(jq -nc '{jsonrpc:"2.0",id:1,method:"initialize",params:{clientInfo:{name:"agent-usage",version:"1.0"}}}')"
   rate_limit_request="$(jq -nc --arg method "$CODEX_RATE_LIMIT_METHOD" \
     '{jsonrpc:"2.0",id:2,method:$method,params:{}}')"
 
+  # app-server が応答を返すまで stdin を開いておく。
   output="$(
     {
       printf '%s\n' "$init_request"
@@ -203,6 +210,22 @@ fetch_codex_usage() {
       if v == null then null
       elif (v|type) == "number" then ((v + 32400) | strftime("%Y-%m-%d %H:%M:%S JST"))
       else v end;
+    # Codex の枠は 5h/7d 固定ではない。windowDurationMins から実際のラベルを作る。
+    def window_label(mins):
+      if mins == null then null
+      elif (mins|type) != "number" then null
+      elif mins < 60 then "\(mins)m"
+      elif mins < 1440 then "\((mins / 60) | floor)h"
+      else "\((mins / 1440) | floor)d" end;
+    # 返ってこない枠（secondary が null など）は windows に載せない。
+    def window(w; fallback_label):
+      if w == null then null
+      else {
+        label:(window_label(w.windowDurationMins // w.window_duration_mins) // fallback_label),
+        window_minutes:(w.windowDurationMins // w.window_duration_mins),
+        used_pct:(pct(w.used_percentage // w.usage_percentage // w.percent_used // w.used_pct // w.usedPercent) // ratio(w.used_fraction // w.usage_ratio)),
+        reset_at:epoch_or_text(w.reset_at // w.resets_at // w.resetsAt // w.reset_time // w.resetAt)
+      } end;
     (.result.rateLimits // .result) as $r
     | {
       agent:"codex",
@@ -210,18 +233,10 @@ fetch_codex_usage() {
       status:(if .error then "error" else "ok" end),
       message:(.error.message // null),
       updated_at:$updated_at,
-      windows:{
-        primary:{
-          label:"5h",
-          used_pct:(pct($r.primary.used_percentage // $r.primary.usage_percentage // $r.primary.percent_used // $r.primary.used_pct // $r.primary.usedPercent) // ratio($r.primary.used_fraction // $r.primary.usage_ratio)),
-          reset_at:epoch_or_text($r.primary.reset_at // $r.primary.resets_at // $r.primary.resetsAt // $r.primary.reset_time // $r.primary.resetAt)
-        },
-        secondary:{
-          label:"7d",
-          used_pct:(pct($r.secondary.used_percentage // $r.secondary.usage_percentage // $r.secondary.percent_used // $r.secondary.used_pct // $r.secondary.usedPercent) // ratio($r.secondary.used_fraction // $r.secondary.usage_ratio)),
-          reset_at:epoch_or_text($r.secondary.reset_at // $r.secondary.resets_at // $r.secondary.resetsAt // $r.secondary.reset_time // $r.secondary.resetAt)
-        }
-      }
+      windows:({
+        primary:window($r.primary; "5h"),
+        secondary:window($r.secondary; "7d")
+      } | with_entries(select(.value != null)))
     }
   ' <<<"$response" 2>/dev/null || json_error "codex" "parse_error" "Codex rate-limit response was not understood"
 }
@@ -229,24 +244,50 @@ fetch_codex_usage() {
 write_state() {
   local claude="$1"
   local codex="$2"
-  local tmp_file state_parent
+  local tmp_file state_parent previous='{}'
   state_parent="$(dirname "$STATE_FILE")"
   mkdir -p "$state_parent" || return 1
   chmod 700 "$state_parent" 2>/dev/null || true
   tmp_file="$(mktemp "$state_parent/state.XXXXXX")" || return 1
   chmod 600 "$tmp_file" 2>/dev/null || true
 
-  jq -n \
+  if [[ -s "$STATE_FILE" ]]; then
+    previous="$(jq -c . "$STATE_FILE" 2>/dev/null || printf '{}')"
+  fi
+
+  if jq -n \
     --arg updated_at "$(iso_now)" \
+    --argjson previous "$previous" \
     --argjson claude "$claude" \
     --argjson codex "$codex" \
-    '{
-      updated_at:$updated_at,
-      agents:{
-        claude:$claude,
-        codex:$codex
+    '
+      def previous_agent($key): $previous.agents[$key] // {};
+      def merge_agent($current; $old):
+        if $current.status == "ok" then
+          $current + {
+            last_success_at: $current.updated_at,
+            last_success_windows: $current.windows
+          }
+        else
+          $current + {
+            last_success_at: ($old.last_success_at // (if $old.status == "ok" then $old.updated_at else null end)),
+            last_success_windows: ($old.last_success_windows // (if $old.status == "ok" then $old.windows else {} end))
+          }
+        end;
+      {
+        schema_version: 1,
+        updated_at: $updated_at,
+        agents: {
+          claude: merge_agent($claude; previous_agent("claude")),
+          codex: merge_agent($codex; previous_agent("codex"))
+        }
       }
-    }' >"$tmp_file" && mv "$tmp_file" "$STATE_FILE" && chmod 600 "$STATE_FILE" 2>/dev/null
+    ' >"$tmp_file" && mv "$tmp_file" "$STATE_FILE"; then
+    chmod 600 "$STATE_FILE" 2>/dev/null || true
+  else
+    rm -f "$tmp_file"
+    return 1
+  fi
 }
 
 collect_once() {
@@ -264,14 +305,22 @@ collect_once() {
   claude="$(cat "$claude_file" 2>/dev/null || json_error "claude" "error" "No Claude state")"
   codex="$(cat "$codex_file" 2>/dev/null || json_error "codex" "error" "No Codex state")"
 
-  write_state "$claude" "$codex"
+  if ! write_state "$claude" "$codex"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
   rm -rf "$tmp_dir"
 }
 
 main() {
+  local started_at elapsed remaining
   if ! command_exists jq; then
     printf 'agent-status-daemon requires jq\n' >&2
     exit 1
+  fi
+
+  if ! [[ "$INTERVAL_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    INTERVAL_SECONDS=60
   fi
 
   umask 077
@@ -310,7 +359,18 @@ main() {
     printf 'agent-status-daemon is already running\n' >&2
     exit 0
   fi
-  trap 'rm -f "$LOCK_DIR/pid"; rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT INT TERM
+  # TERM/INT でロックだけ消してループを継続すると多重起動する。
+  # 終了時にだけロックを掃除し、シグナルでは必ず exit する。
+  cleanup_lock() {
+    # collect_once内のバックグラウンド子プロセスにもEXIT trapが継承される。
+    # ロックを取得した親だけが消せるようにする。
+    [[ "$BASHPID" == "$LOCK_OWNER_BASHPID" ]] || return
+    rm -f "$LOCK_DIR/pid"
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+  }
+  LOCK_OWNER_BASHPID="$BASHPID"
+  trap cleanup_lock EXIT
+  trap 'exit 0' INT TERM
 
   if [[ "${1:-}" == "--once" ]]; then
     collect_once
@@ -318,9 +378,16 @@ main() {
   fi
 
   while :; do
+    started_at="$SECONDS"
     collect_once
-    sleep "$INTERVAL_SECONDS"
+    elapsed=$((SECONDS - started_at))
+    remaining=$((INTERVAL_SECONDS - elapsed))
+    if ((remaining > 0)); then
+      sleep "$remaining"
+    fi
   done
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
