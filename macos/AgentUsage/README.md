@@ -28,7 +28,7 @@ cd macos/AgentUsage
 その後、デスクトップを右クリック →「ウィジェットを編集」→ 検索欄に `Agent Usage` で追加します。
 Small / Medium / Large に対応しています。
 
-`AgentUsage.app` は通常のアプリとして Dock とアプリケーションスイッチャーに表示されます。同時に、メニューバーにはゲージアイコンと `Claude Code 33%` または `Codex 33%` のような最大利用率を表示します。クリックすると同じ利用状況をコンパクトに確認できます。「ログイン時に起動」の設定は本体ウィンドウにのみ表示されます。
+`AgentUsage.app` は通常のアプリとして Dock とアプリケーションスイッチャーに表示されます。同時に、メニューバーには最も使用率が高いエージェントに応じたアイコンと `33%` のような最大利用率を表示します。「メニューバーを短く表示」を無効にすると、`Claude Code 33%` または `Codex 33%` のようにエージェント名も表示します。クリックすると同じ利用状況をコンパクトに確認でき、外側をクリックすると閉じます。「ログイン時に起動」の設定は本体ウィンドウにのみ表示されます。
 
 ## 構成
 
@@ -103,7 +103,7 @@ Codex は現在 7 日枠しか返さないため 1 行だけになります。�
 swift Tools/make-icon.swift Sources/App/Assets.xcassets/AppIcon.appiconset
 ```
 
-メニューバーのアイコンは SF Symbols の `gauge.with.dots.needle.33percent` を使っています。
+メニューバーのアイコンは Claude Code に `sparkles`、Codex に `chevron.left.forwardslash.chevron.right`、状態未取得時に `gauge.with.dots.needle.33percent` を使っています。
 
 ## 開発
 

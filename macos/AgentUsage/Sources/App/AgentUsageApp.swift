@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItemController: StatusItemController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppPreferences.registerDefaults()
         configureMainWindow()
         statusItemController = StatusItemController(store: store, alerts: alertManager)
         showMainWindow()
@@ -68,27 +69,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 /// ステータス項目、ポップオーバー、表示文言を一元管理する。
 @MainActor
-private final class StatusItemController {
+private final class StatusItemController: NSObject, NSPopoverDelegate {
     private let store: UsageStore
     private let alerts: UsageAlertManager
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
     private var stateObservation: AnyCancellable?
+    private var preferencesObservation: AnyCancellable?
+    private var localMouseMonitor: Any?
+    private var globalMouseMonitor: Any?
 
     init(store: UsageStore, alerts: UsageAlertManager) {
         self.store = store
         self.alerts = alerts
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        super.init()
         configureStatusItem()
         configurePopover()
         stateObservation = store.$state.sink { [weak self] state in
             self?.updateStatusItem(state: state)
         }
+        preferencesObservation = NotificationCenter.default
+            .publisher(for: UserDefaults.didChangeNotification)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.updateStatusItem(state: self.store.state)
+            }
         updateStatusItem(state: store.state)
     }
 
     deinit {
         stateObservation?.cancel()
+        preferencesObservation?.cancel()
+        if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+        }
+        if let globalMouseMonitor {
+            NSEvent.removeMonitor(globalMouseMonitor)
+        }
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 
@@ -107,6 +125,7 @@ private final class StatusItemController {
 
     private func configurePopover() {
         popover.behavior = .transient
+        popover.delegate = self
         popover.contentSize = NSSize(width: 340, height: 350)
         popover.contentViewController = NSHostingController(
             rootView: ContentView(showsLaunchAtLogin: false)
@@ -120,17 +139,26 @@ private final class StatusItemController {
             .filter(\.isOK)
             .flatMap { agent in
                 agent.orderedWindows.compactMap { window in
-                    window.usedPct.map { (agent: agent.label, window: window.label, usedPct: $0) }
+                    window.usedPct.map {
+                        (agentID: agent.agent, agentLabel: agent.label, usedPct: $0)
+                    }
                 }
             }
             .max { $0.usedPct < $1.usedPct }
 
-        let title = mostUrgent.map {
-            "\($0.agent) \($0.window) \(UsageFormat.percent($0.usedPct))"
+        let fullTitle = mostUrgent.map {
+            "\($0.agentLabel) \(UsageFormat.percent($0.usedPct))"
         } ?? "Agent Usage --%"
+        let compactTitle = mostUrgent.map {
+            UsageFormat.percent($0.usedPct)
+        } ?? "--%"
+        let title = UserDefaults.standard.bool(forKey: AppPreferences.compactStatusItemKey)
+            ? compactTitle
+            : fullTitle
+        statusItem.button?.image = statusIcon(for: mostUrgent?.agentID)
         statusItem.button?.title = title
-        statusItem.button?.setAccessibilityLabel("Agent Usage: \(title)")
-        statusItem.button?.toolTip = "Agent Usage\n\(title)"
+        statusItem.button?.setAccessibilityLabel("Agent Usage: \(fullTitle)")
+        statusItem.button?.toolTip = "Agent Usage\n\(fullTitle)"
     }
 
     @objc private func togglePopover() {
@@ -141,6 +169,7 @@ private final class StatusItemController {
         }
 
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        startOutsideClickMonitoring()
         // macOSのメニューバー構成によって下に離れることがあるため、実座標で補正する。
         DispatchQueue.main.async { [weak self, weak button] in
             guard let self, let button else { return }
@@ -164,5 +193,66 @@ private final class StatusItemController {
             origin.y = max(origin.y, visibleFrame.minY)
         }
         popoverWindow.setFrameOrigin(origin)
+    }
+
+    private func statusIcon(for agentID: String?) -> NSImage? {
+        let symbolName: String
+        let description: String
+        switch agentID {
+        case "claude":
+            symbolName = "sparkles"
+            description = "Claude Code"
+        case "codex":
+            symbolName = "chevron.left.forwardslash.chevron.right"
+            description = "Codex"
+        default:
+            symbolName = "gauge.with.dots.needle.33percent"
+            description = "Agent Usage"
+        }
+
+        let configuration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: description)?
+            .withSymbolConfiguration(configuration)
+        image?.isTemplate = true
+        return image
+    }
+
+    private func startOutsideClickMonitoring() {
+        stopOutsideClickMonitoring()
+
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            guard let self else { return event }
+            let popoverWindow = self.popover.contentViewController?.view.window
+            let statusWindow = self.statusItem.button?.window
+            if event.window !== popoverWindow, event.window !== statusWindow {
+                self.popover.performClose(nil)
+            }
+            return event
+        }
+
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.popover.performClose(nil)
+            }
+        }
+    }
+
+    private func stopOutsideClickMonitoring() {
+        if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+            self.localMouseMonitor = nil
+        }
+        if let globalMouseMonitor {
+            NSEvent.removeMonitor(globalMouseMonitor)
+            self.globalMouseMonitor = nil
+        }
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        stopOutsideClickMonitoring()
     }
 }

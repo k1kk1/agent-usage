@@ -9,6 +9,7 @@ struct ContentView: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var launchAtLoginError: String?
     @State private var showsReloadConfirmation = false
+    @AppStorage(AppPreferences.compactStatusItemKey) private var compactStatusItem = true
 
     var body: some View {
         ScrollView {
@@ -54,6 +55,11 @@ struct ContentView: View {
                     Toggle("80%・95%で通知", isOn: $alerts.enabled)
                         .toggleStyle(.checkbox)
                         .font(.system(size: 11))
+
+                    Toggle("メニューバーを短く表示", isOn: $compactStatusItem)
+                        .toggleStyle(.checkbox)
+                        .font(.system(size: 11))
+                        .help("エージェント別アイコンと使用率だけを表示します")
 
                     if let launchAtLoginError {
                         Text(launchAtLoginError)
