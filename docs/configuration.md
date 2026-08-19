@@ -47,10 +47,19 @@ tmux の右側に 48 桁のペインを作る例:
 tmux split-window -h -l 48 './agent-status-pane.sh'
 ```
 
-狭いペインではバー幅を調整します。
+バー幅は端末幅から自動で決まります。明示したい場合だけ指定します。
 
 ```sh
 AGENT_STATUS_BAR_WIDTH=12 ./agent-status-pane.sh
+```
+
+26 桁がこのレイアウトの下限です。これより狭いと行が収まりません。狭いペインでは
+リセット時刻が先に省かれます。
+
+表示を固定幅で確認したいときは `--cols` を使います。
+
+```sh
+./agent-status-pane.sh --test sample/state-low.json --cols 34
 ```
 
 表示される更新時刻とリセット時刻は JST です。
@@ -63,9 +72,42 @@ AGENT_STATUS_BAR_WIDTH=12 ./agent-status-pane.sh
 | `AGENT_STATUS_STATE_FILE` | `$AGENT_STATUS_STATE_DIR/state.json` | Daemon と Viewer が共有する状態 JSON |
 | `AGENT_STATUS_INTERVAL_SECONDS` | `60` | Daemon の取得間隔 |
 | `AGENT_STATUS_PANE_REFRESH_SECONDS` | `3` | Viewer の再描画間隔 |
-| `AGENT_STATUS_BAR_WIDTH` | `16` | プログレスバー幅 |
+| `AGENT_STATUS_BAR_WIDTH` | 端末幅から自動 | プログレスバー幅。数値でない値と、行が折り返す値は無視します |
+| `AGENT_STATUS_SHOW_TOKENS` | `1` | `0` でペインのトークン行を消します |
 | `CODEX_APP_SERVER_COMMAND` | `codex app-server` | Codex の stdio JSON-RPC コマンド |
 | `CODEX_APP_SERVER_WAIT_SECONDS` | `10` | Codex app-server からのレスポンス待機秒数 |
+
+## トークン集計
+
+| 変数 | 既定値 | 説明 |
+| --- | --- | --- |
+| `AGENT_USAGE_COLLECT` | `1` | `0` で集計を止めます。利用枠の表示だけ残ります |
+| `AGENT_USAGE_COLLECTOR` | `<repo>/usage-collector.sh` | 集計スクリプトのパス |
+| `AGENT_USAGE_PRICING_FILE` | `<repo>/pricing.json` | モデル単価表 |
+| `AGENT_USAGE_CACHE_FILE` | `$AGENT_STATUS_STATE_DIR/usage-cache.json` | ファイル単位の集計キャッシュ |
+| `AGENT_USAGE_DAILY_DAYS` | `7` | 日別推移として残す日数 |
+| `CLAUDE_PROJECTS_DIR` | `$HOME/.claude/projects` | Claude Code の transcript 置き場 |
+| `CODEX_SESSIONS_DIR` | `$HOME/.codex/sessions` | Codex の rollout ログ置き場 |
+
+集計だけを単体で実行できます。
+
+```sh
+./usage-collector.sh claude
+./usage-collector.sh codex
+```
+
+単価を変えたい場合は `pricing.json` をコピーして差し替えます。
+
+```sh
+AGENT_USAGE_PRICING_FILE=~/my-pricing.json ./agent-status-daemon.sh --once
+```
+
+キャッシュはファイルの `(size, mtime, inode)` で判定します。集計結果が合わないときは
+キャッシュを消すと全ファイルを読み直します。
+
+```sh
+rm "$HOME/.cache/agent-status/usage-cache.json"
+```
 
 ## Claude Code
 
@@ -101,6 +143,8 @@ rate_limits.seven_day.resets_at
 context_window.remaining_percentage
 cost.total_cost_usd
 ```
+
+これは statusLine JSON 側のキー名です。state.json へは `cost.total_usd` として書き出します。
 
 ## Codex
 

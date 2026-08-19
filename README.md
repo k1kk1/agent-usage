@@ -100,9 +100,12 @@ tmux split-window -h -l 48 'cd /Users/kikki/src/agent-usage && ./agent-status-pa
 
 - `agent-status-daemon.sh`: API を取得して状態 JSON を作る常駐プロセス。
 - `agent-status-pane.sh`: 状態 JSON を表示するペイン用 UI。
+- `usage-collector.sh`: セッションログからトークン利用数を集計する。
+- `pricing.json`: コスト概算に使うモデル単価表。
 - `macos/AgentUsage/`: macOS メニューバーアプリと WidgetKit 拡張。
 - `claude-status-line.sh`: Claude Code の statusLine から受け取った JSON を保存するスクリプト。
 - `sample/state-*.json`: 表示テスト用の状態 JSON。
+- `tests/`: シェル側のテスト。`bash tests/run.sh` で実行。
 
 状態ファイルは既定で `${XDG_RUNTIME_DIR:-$HOME/.cache}/agent-status/state.json` に作られます。
 
@@ -113,7 +116,8 @@ pane 起動
   └─ daemon を自動起動（多重起動は PID チェックで防止）
        └─ 60 秒ごとに収集
             ├─ Claude 使用量を並列取得
-            └─ Codex 使用量を並列取得
+            ├─ Codex 使用量を並列取得
+            └─ トークン利用数を並列集計（変化したログだけ読み直す）
                  └─ state.json にアトミック書き込み（tmp → mv）
 
 pane
@@ -131,6 +135,20 @@ statusLine の仕様: https://code.claude.com/docs/ja/statusline
 ### Codex 使用量の取得
 
 `codex app-server` プロセスに JSON-RPC で `account/rateLimits/read` を送り、レスポンスから利用率を取り出します。
+
+### トークン利用数の集計
+
+利用枠の割合は API から取れますが、トークンの実数はどちらのエージェントも API では返しません。`usage-collector.sh` がローカルのセッションログ（Claude は `~/.claude/projects`、Codex は `~/.codex/sessions`）を読み、今日ぶん・現在のセッションぶん・直近 7 日の推移を集計します。
+
+ログは追記のみなので、変化したファイルだけを読み直すようキャッシュしています。
+
+```sh
+./usage-collector.sh claude
+```
+
+コストはキャッシュの読み書きが支配的なため、read と write を単価に対して重み付けして概算します。単価は `pricing.json` で差し替えられます。Codex は ChatGPT プランに含まれ単価を持たないため、トークン数だけを出します。
+
+ペインでのトークン行は `AGENT_STATUS_SHOW_TOKENS=0` で消せます。
 
 ### エラー時の挙動
 
