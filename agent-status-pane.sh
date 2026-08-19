@@ -9,10 +9,16 @@ STATE_FILE="${AGENT_STATUS_STATE_FILE:-$STATE_DIR/state.json}"
 LOCK_DIR="${AGENT_STATUS_LOCK_DIR:-$STATE_DIR/daemon.lock}"
 REFRESH_SECONDS="${AGENT_STATUS_PANE_REFRESH_SECONDS:-3}"
 DAEMON_LOG="${AGENT_STATUS_DAEMON_LOG:-$STATE_DIR/daemon.log}"
-BAR_WIDTH="${AGENT_STATUS_BAR_WIDTH:-16}"
+BAR_WIDTH_SETTING="${AGENT_STATUS_BAR_WIDTH:-}"
+SHOW_TOKENS="${AGENT_STATUS_SHOW_TOKENS:-1}"
+BAR_WIDTH=16
+SHOW_RESET=1
+PANE_COLS=0
 SLEEP_PID=""
 LAST_RENDERED_STATE_HASH=""
 TEST_MODE=0
+TEST_COLS=0
+NEED_REDRAW=1
 
 BOLD=$'\033[1m'
 DIM=$'\033[2m'
@@ -30,6 +36,73 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+# マルチバイト文字の繰り返し。tr はバイト単位で動くため、`tr ' ' '█'` は
+# 3 バイト文字の先頭 1 バイトだけを書き出して壊れる。
+repeat_char() {
+  local char="$1"
+  local count="$2"
+  local out="" i
+
+  ((count > 0)) || return 0
+  for ((i = 0; i < count; i++)); do
+    out+="$char"
+  done
+  printf '%s' "$out"
+}
+
+
+# 端末幅。--test では再現性のため固定値を使えるようにする。
+pane_cols() {
+  if ((TEST_COLS > 0)); then
+    printf '%s' "$TEST_COLS"
+    return
+  fi
+  local cols
+  cols="$(tput cols 2>/dev/null)"
+  [[ "$cols" =~ ^[0-9]+$ ]] && ((cols > 0)) || cols=48
+  printf '%s' "$cols"
+}
+
+# バー以外が使う桁数。名前(7) + 空白 + 枠(3) + 空白 + "[" + "]" + 空白 + 率(6)。
+BAR_ROW_OVERHEAD=22
+# リセット時刻 " 06/22 13:00" のぶん。
+RESET_COLUMN_WIDTH=12
+
+# バー幅は端末幅から決める。AGENT_STATUS_BAR_WIDTH の指定があればそれを優先するが、
+# 数値でない値をそのまま使うと printf と算術式が落ちるため必ず検証する。
+resolve_bar_width() {
+  local cols="$1"
+  local overhead=$BAR_ROW_OVERHEAD
+  local width
+
+  ((SHOW_RESET == 1)) && overhead=$((overhead + RESET_COLUMN_WIDTH))
+
+  if [[ "$BAR_WIDTH_SETTING" =~ ^[1-9][0-9]*$ ]]; then
+    width="$BAR_WIDTH_SETTING"
+  else
+    width=$((cols - overhead))
+  fi
+
+  ((width < 4)) && width=4
+  # 指定値が広すぎても行を折り返させない。
+  ((width > cols - overhead)) && width=$((cols - overhead))
+  ((width < 4)) && width=4
+  printf '%s' "$width"
+}
+
+# 表示幅に収める。ANSI を混ぜる前に切るので、色は長さに数えない。
+truncate_to() {
+  local text="$1"
+  local limit="$2"
+
+  ((limit > 0)) || limit=1
+  if ((${#text} > limit)); then
+    printf '%s' "${text:0:limit}"
+  else
+    printf '%s' "$text"
+  fi
+}
+
 usage() {
   cat <<EOF
 Usage:
@@ -38,6 +111,7 @@ Usage:
 
 Options:
   --test STATE_JSON   Render the given state JSON once without starting daemon.
+  --cols N            Render at a fixed terminal width (for tests).
   --help              Show this help.
 EOF
 }
@@ -52,6 +126,14 @@ parse_args() {
         fi
         STATE_FILE="$2"
         TEST_MODE=1
+        shift 2
+        ;;
+      --cols)
+        if [[ -z "${2:-}" || ! "$2" =~ ^[1-9][0-9]*$ ]]; then
+          printf -- '--cols requires a positive number\n' >&2
+          exit 2
+        fi
+        TEST_COLS="$2"
         shift 2
         ;;
       --help|-h)
@@ -156,7 +238,7 @@ progress_bar() {
 
   if [[ -z "$pct" || "$pct" == "null" || ! "$pct" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
     printf '%s' "$MUTED"
-    printf '%*s' "$BAR_WIDTH" '' | tr ' ' '░'
+    repeat_char '░' "$BAR_WIDTH"
     printf '%s' "$RESET"
     return
   fi
@@ -171,9 +253,9 @@ progress_bar() {
   color="$(ansi_for "$pct")"
 
   printf '%s' "$color"
-  printf '%*s' "$filled" '' | tr ' ' '█'
+  repeat_char '█' "$filled"
   printf '%s' "$MUTED"
-  printf '%*s' "$empty" '' | tr ' ' '░'
+  repeat_char '░' "$empty"
   printf '%s' "$RESET"
 }
 
@@ -233,6 +315,10 @@ error_row() {
 
   [[ -n "$message" && "$message" != "null" ]] && label="$label: $message"
 
+  # 40〜50 桁のペインを想定しているのに、daemon のメッセージは長くなりうる。
+  # 折り返すと以降の行がずれるので、名前の分を除いた幅で切る。
+  label="$(truncate_to "$label" $((PANE_COLS - 8)))"
+
   printf "%-7.7s ${RED}%s${RESET}" "$name" "$label"
 }
 
@@ -250,13 +336,85 @@ row() {
   fi
 
   # ラベルは "5h" "7d" のほか "30m" のような 3 桁もありうる。
-  printf "%-7.7s ${DIM}%-3.3s${RESET} [%s] %s%6s${RESET} ${DIM}%s${RESET}" \
+  printf "%-7.7s ${DIM}%-3.3s${RESET} [%s] %s%6s${RESET}" \
     "$name" \
     "$window" \
     "$(progress_bar "$pct")" \
     "$color" \
-    "$pct_label" \
-    "$(fmt_reset "$expires")"
+    "$pct_label"
+
+  ((SHOW_RESET == 1)) && printf " ${DIM}%s${RESET}" "$(fmt_reset "$expires")"
+  return 0
+}
+
+# 幅いっぱいの区切り線。見出しを渡すと "── tokens ────" の形にする。
+rule() {
+  local title="${1:-}"
+  local width=$((PANE_COLS - 2))
+  ((width < 4)) && width=4
+
+  if [[ -z "$title" ]]; then
+    repeat_char '─' "$width"
+    return
+  fi
+
+  local head=2
+  local tail=$((width - head - ${#title} - 2))
+  ((tail < 0)) && tail=0
+  repeat_char '─' "$head"
+  printf ' %s ' "$title"
+  repeat_char '─' "$tail"
+}
+
+# 1_234_567 → "1.2M"。桁が変わっても幅が動かないよう 4 文字前後に丸める。
+fmt_tokens() {
+  local n="$1"
+
+  [[ "$n" =~ ^[0-9]+$ ]] || {
+    printf -- '--'
+    return
+  }
+
+  jq -nr --argjson n "$n" '
+    if $n >= 1000000 then ($n / 1000000 * 10 | floor / 10 | tostring) + "M"
+    elif $n >= 10000 then ($n / 1000 | floor | tostring) + "k"
+    elif $n >= 1000 then ($n / 1000 * 10 | floor / 10 | tostring) + "k"
+    else ($n | tostring)
+    end'
+}
+
+# トークン行。集計はローカルのログ由来なので、利用枠の取得が失敗していても出す。
+agent_token_lines() {
+  local name="$1"
+  local agent="$2"
+  local rows first="$name"
+
+  rows="$(jq -r --arg a "$agent" '
+    .agents[$a].usage // empty
+    | [ (.today  | select(. != null) | ["today",   (.total // 0), (.cost_usd // "")]),
+        (.session| select(. != null) | ["session", (.total // 0), (.cost_usd // "")]) ]
+    | .[] | @tsv
+  ' "$STATE_FILE" 2>/dev/null)"
+
+  [[ -n "$rows" ]] || return 0
+
+  local label total cost line
+  while IFS=$'\t' read -r label total cost; do
+    [[ -n "$label" ]] || continue
+    # 枠の行と数値の列を揃える: 名前(7) + 枠(3) + " [" + バー + "] "。
+    line="$(printf "%-7.7s ${DIM}%-*.*s${RESET} %6s" \
+      "$first" \
+      "$((BAR_WIDTH + 6))" "$((BAR_WIDTH + 6))" "$label" \
+      "$(fmt_tokens "$total")")"
+    # ここまでで 名前(7) + 空白 + ラベル(BAR_WIDTH+6) + 空白 + 数値(6)。
+    # 概算コスト "  ~$12.34" は 9 桁使うので、残り幅がある時だけ足す。
+    if [[ -n "$cost" && "$cost" != "null" ]] \
+      && ((PANE_COLS - (BAR_WIDTH + 21) >= 9)); then
+      line+="$(printf "  ${DIM}~\$%.2f${RESET}" "$cost")"
+    fi
+    printf '%s\033[K\n' "$line"
+    first=""
+  done <<<"$rows"
 }
 
 # エージェント 1 つ分を描画する。エラー時と、枠が 1 つも無い時は 1 行にまとめる。
@@ -299,13 +457,13 @@ render_starting() {
 
   printf '\033[H'
   printf "${BOLD}${CYAN} Agent Status${RESET} ${DIM}· starting daemon...${RESET}\033[K\n"
-  printf "${DIM}state: %s${RESET}\033[K\n" "$STATE_FILE"
+  printf "${DIM}state: %s${RESET}\033[K\n" "$(truncate_to "$STATE_FILE" $((PANE_COLS - 7)))"
 
   if [[ -n "$log_tail" ]]; then
     printf "\033[K\n"
     printf "${DIM}daemon log:${RESET}\033[K\n"
     while IFS= read -r line; do
-      printf "${RED}%s${RESET}\033[K\n" "$line"
+      printf "${RED}%s${RESET}\033[K\n" "$(truncate_to "$line" "$PANE_COLS")"
     done <<<"$log_tail"
   fi
 
@@ -319,17 +477,39 @@ render_dashboard() {
   [[ -n "$updated" ]] && updated_label="$(fmt_reset "$updated")"
 
   printf '\033[H'
-  printf "${BOLD}${CYAN} Agent Status${RESET}  ${DIM}· updated %s${RESET}\033[K\n" "$updated_label"
-  printf "${DIM} ─────────────────────────────────────────${RESET}\033[K\n"
+  printf "${BOLD}${CYAN} Agent Status${RESET}"
+  # " Agent Status" が 13 桁、" · updated MM/DD HH:MM" が 23 桁。
+  ((PANE_COLS >= 36)) && printf "  ${DIM}· updated %s${RESET}" "$updated_label"
+  printf '\033[K\n'
+  printf "${DIM} %s${RESET}\033[K\n" "$(rule)"
 
   agent_block "Claude" "claude"
   agent_block "Codex" "codex"
+
+  if [[ "$SHOW_TOKENS" == "1" ]]; then
+    local claude_tokens codex_tokens
+    claude_tokens="$(agent_token_lines "Claude" "claude")"
+    codex_tokens="$(agent_token_lines "Codex" "codex")"
+
+    if [[ -n "$claude_tokens" || -n "$codex_tokens" ]]; then
+      printf "${DIM} %s${RESET}\033[K\n" "$(rule "tokens")"
+      [[ -n "$claude_tokens" ]] && printf '%s\n' "$claude_tokens"
+      [[ -n "$codex_tokens" ]] && printf '%s\n' "$codex_tokens"
+    fi
+  fi
 
   clear_to_end
 }
 
 draw() {
   local updated current_hash
+
+  PANE_COLS="$(pane_cols)"
+  # 狭いペインではリセット時刻を落とす。バーを削るより先にこちらを削った方が
+  # 「あとどれだけ使えるか」が読める。
+  SHOW_RESET=1
+  ((PANE_COLS < BAR_ROW_OVERHEAD + RESET_COLUMN_WIDTH + 8)) && SHOW_RESET=0
+  BAR_WIDTH="$(resolve_bar_width "$PANE_COLS")"
 
   tput civis 2>/dev/null || true
 
@@ -355,10 +535,15 @@ draw() {
     return
   }
 
-  if [[ -n "$current_hash" && "$current_hash" == "$LAST_RENDERED_STATE_HASH" ]]; then
+  # 端末幅もハッシュに混ぜる。state が変わるまで最大 60 秒あるため、
+  # 幅の変化を見ないとリサイズ後の崩れがそのまま残る。
+  current_hash="$current_hash:${PANE_COLS}"
+
+  if ((NEED_REDRAW == 0)) && [[ -n "$current_hash" && "$current_hash" == "$LAST_RENDERED_STATE_HASH" ]]; then
     return
   fi
 
+  NEED_REDRAW=0
   LAST_RENDERED_STATE_HASH="$current_hash"
 
   updated="$(state_value '.updated_at')"
@@ -395,6 +580,8 @@ main() {
 
   trap cleanup EXIT
   trap stop_pane INT TERM
+  # リサイズは state の更新とは無関係に起きる。次の描画で必ず引き直す。
+  trap 'NEED_REDRAW=1' WINCH
 
   if ((TEST_MODE == 1)); then
     draw

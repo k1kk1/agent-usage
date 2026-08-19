@@ -41,6 +41,20 @@ json_value() {
   jq -r "$1 // empty" <<<"$input_json" 2>/dev/null
 }
 
+# マルチバイト文字の繰り返し。tr はバイト単位で動くため、`tr ' ' '█'` は
+# 3 バイト文字の先頭 1 バイトだけを書き出して壊れる。
+repeat_char() {
+  local char="$1"
+  local count="$2"
+  local out="" i
+
+  ((count > 0)) || return 0
+  for ((i = 0; i < count; i++)); do
+    out+="$char"
+  done
+  printf '%s' "$out"
+}
+
 ansi_for() {
   local pct="${1:-}"
   local whole
@@ -72,9 +86,9 @@ progress_bar() {
   empty=$((BAR_WIDTH - filled))
   color="$(ansi_for "$pct")"
   printf '%s' "$color"
-  printf '%*s' "$filled" '' | tr ' ' '█'
+  repeat_char '█' "$filled"
   printf '%s' "$MUTED"
-  printf '%*s' "$empty" '' | tr ' ' '░'
+  repeat_char '░' "$empty"
   printf '%s' "$RESET"
 }
 
