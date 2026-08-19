@@ -125,9 +125,10 @@ struct UsageState: Decodable {
 
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            today = try container.decodeIfPresent(Bucket.self, forKey: .today)
-            session = try container.decodeIfPresent(Bucket.self, forKey: .session)
-            daily = try container.decodeIfPresent([Day].self, forKey: .daily) ?? []
+            // 集計側のスキーマが先に進んでも、利用枠の表示は生かしておきたい。
+            today = (try? container.decodeIfPresent(Bucket.self, forKey: .today)) ?? nil
+            session = (try? container.decodeIfPresent(Bucket.self, forKey: .session)) ?? nil
+            daily = ((try? container.decodeIfPresent([Day].self, forKey: .daily)) ?? nil) ?? []
         }
 
         struct Bucket: Decodable {
@@ -147,6 +148,20 @@ struct UsageState: Decodable {
                 case cacheWrite = "cache_write"
                 case cacheRead = "cache_read"
                 case costUsd = "cost_usd"
+            }
+
+            /// 数値が 1 つ欠けただけで Agent 全体のデコードが落ち、利用枠まで
+            /// 表示されなくなるのは割に合わない。欠けは 0 として読む。
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                date = try container.decodeIfPresent(String.self, forKey: .date)
+                id = try container.decodeIfPresent(String.self, forKey: .id)
+                input = try container.decodeIfPresent(Int.self, forKey: .input) ?? 0
+                output = try container.decodeIfPresent(Int.self, forKey: .output) ?? 0
+                cacheWrite = try container.decodeIfPresent(Int.self, forKey: .cacheWrite) ?? 0
+                cacheRead = try container.decodeIfPresent(Int.self, forKey: .cacheRead) ?? 0
+                total = try container.decodeIfPresent(Int.self, forKey: .total) ?? 0
+                costUsd = try container.decodeIfPresent(Double.self, forKey: .costUsd)
             }
         }
 

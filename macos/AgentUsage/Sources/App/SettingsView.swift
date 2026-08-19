@@ -35,7 +35,7 @@ struct SettingsView: View {
             .toggleStyle(.checkbox)
             .font(.system(size: 11))
 
-            Text("メニューバーを右クリックしても、表示する枠と終了を選べます。")
+            Text("メニューバーを右クリックしても、表示する項目と終了を選べます。")
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -68,9 +68,31 @@ struct SettingsView: View {
                     ForEach(windowLabels(for: agent), id: \.self) { label in
                         windowToggle(scope: scope, agent: agent, window: label)
                     }
+
+                    ForEach(DisplayPreferences.Metric.allCases, id: \.self) { metric in
+                        metricToggle(scope: scope, agent: agent, metric: metric)
+                    }
                 }
             }
         }
+    }
+
+    private func metricToggle(
+        scope: DisplayPreferences.Scope,
+        agent: UsageState.Agent,
+        metric: DisplayPreferences.Metric
+    ) -> some View {
+        let binding = Binding(
+            get: { display.isSelected(scope: scope, agentID: agent.agent, metric: metric) },
+            set: { _ in display.toggle(scope: scope, agentID: agent.agent, metric: metric) }
+        )
+
+        return Toggle(isOn: binding) {
+            Text(metric.title)
+                .font(.system(size: 11))
+        }
+        .toggleStyle(.checkbox)
+        .padding(.leading, 18)
     }
 
     private func windowToggle(

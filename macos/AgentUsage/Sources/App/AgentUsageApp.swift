@@ -184,16 +184,21 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
         let label: String
         /// 右クリックメニューで選ばれている枠だけを、その順で持つ。
         let windows: [(label: String, usedPct: Double?)]
+        /// 設定で選ばれているトークン項目。既定では空。
+        let tokens: [(label: String, total: Int?)]
+
+        var isEmpty: Bool { windows.isEmpty && tokens.isEmpty }
 
         var percentText: String {
-            windows
-                .map { $0.usedPct.map(UsageFormat.percent) ?? "--%" }
+            (windows.map { $0.usedPct.map(UsageFormat.percent) ?? "--%" }
+                + tokens.map { UsageFormat.tokens($0.total) })
                 .joined(separator: " / ")
         }
 
         var detailText: String {
-            let detail = windows
+            let detail = (windows
                 .map { "\($0.label) \($0.usedPct.map(UsageFormat.percent) ?? "--%")" }
+                + tokens.map { "\($0.label) \(UsageFormat.tokens($0.total))" })
                 .joined(separator: " ")
             return "\(label) \(detail)"
         }
@@ -211,13 +216,28 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
         let entries: [StatusEntry] = state?.orderedAgents.compactMap { agent in
             let available = menuWindowLabels(for: agent)
             let selected = display.windows(scope: .menuBar, agentID: agent.agent, available: available)
-            guard !selected.isEmpty else { return nil }
 
             let windows = selected.map { label -> (label: String, usedPct: Double?) in
                 let window = agent.orderedWindows.first { $0.label == label }
                 return (label, agent.isOK ? window?.usedPct : nil)
             }
-            return StatusEntry(agentID: agent.agent, label: agent.label, windows: windows)
+
+            // トークンはローカルのログ由来なので、利用枠の取得が失敗していても出す。
+            let tokens = display.metrics(scope: .menuBar, agentID: agent.agent)
+                .map { metric -> (label: String, total: Int?) in
+                    switch metric {
+                    case .tokensToday: return (metric.rowLabel, agent.usage?.today?.total)
+                    case .tokensSession: return (metric.rowLabel, agent.usage?.session?.total)
+                    }
+                }
+
+            let entry = StatusEntry(
+                agentID: agent.agent,
+                label: agent.label,
+                windows: windows,
+                tokens: tokens
+            )
+            return entry.isEmpty ? nil : entry
         } ?? []
 
         // ツールチップと VoiceOver 向けにはエージェント名と枠名を残す。
@@ -333,6 +353,23 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
                 ) ? .on : .off
                 menu.addItem(item)
             }
+            for metric in DisplayPreferences.Metric.allCases {
+                let item = NSMenuItem(
+                    title: metric.title,
+                    action: #selector(toggleStatusMetric(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.indentationLevel = 1
+                item.representedObject = [agent.agent, metric.rawValue]
+                item.state = display.isSelected(
+                    scope: .menuBar,
+                    agentID: agent.agent,
+                    metric: metric
+                ) ? .on : .off
+                menu.addItem(item)
+            }
+
             menu.addItem(.separator())
         }
 
@@ -359,6 +396,15 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
             window: payload[1],
             available: Array(payload.dropFirst(2))
         )
+        updateStatusItem(state: store.state)
+    }
+
+    @objc private func toggleStatusMetric(_ sender: NSMenuItem) {
+        guard
+            let payload = sender.representedObject as? [String], payload.count >= 2,
+            let metric = DisplayPreferences.Metric(rawValue: payload[1])
+        else { return }
+        display.toggle(scope: .menuBar, agentID: payload[0], metric: metric)
         updateStatusItem(state: store.state)
     }
 

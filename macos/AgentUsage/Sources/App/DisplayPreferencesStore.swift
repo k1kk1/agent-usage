@@ -39,6 +39,27 @@ final class DisplayPreferencesStore: ObservableObject {
         save()
     }
 
+    func metrics(scope: DisplayPreferences.Scope, agentID: String) -> [DisplayPreferences.Metric] {
+        preferences.metrics(scope: scope, agentID: agentID)
+    }
+
+    func isSelected(
+        scope: DisplayPreferences.Scope,
+        agentID: String,
+        metric: DisplayPreferences.Metric
+    ) -> Bool {
+        preferences.isSelected(scope: scope, agentID: agentID, metric: metric)
+    }
+
+    func toggle(
+        scope: DisplayPreferences.Scope,
+        agentID: String,
+        metric: DisplayPreferences.Metric
+    ) {
+        preferences.toggle(scope: scope, agentID: agentID, metric: metric)
+        save()
+    }
+
     private func save() {
         if let data = try? JSONEncoder().encode(preferences) {
             UserDefaults.standard.set(data, forKey: Self.key)

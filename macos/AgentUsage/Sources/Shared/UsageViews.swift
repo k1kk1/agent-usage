@@ -56,6 +56,31 @@ enum UsageFormat {
         return String(format: "%.0f%%", pct)
     }
 
+    /// トークン数は桁が大きく毎回変わるので、幅が動かないよう 4 文字前後に丸める。
+    /// 1234567 → "1.2M"、12345 → "12k"。
+    static func tokens(_ count: Int?) -> String {
+        guard let count else { return "--" }
+        let value = Double(count)
+        switch abs(count) {
+        case 1_000_000...:
+            return String(format: "%.1fM", value / 1_000_000)
+        case 10_000...:
+            return String(format: "%.0fk", value / 1_000)
+        case 1_000...:
+            return String(format: "%.1fk", value / 1_000)
+        default:
+            return "\(count)"
+        }
+    }
+
+    /// 単価表を持たないエージェント（Codex）では nil になる。
+    static func cost(_ usd: Double?) -> String? {
+        guard let usd else { return nil }
+        return usd >= 10
+            ? String(format: "$%.0f", usd)
+            : String(format: "$%.2f", usd)
+    }
+
     static func freshness(_ text: String?, now: Date = Date()) -> String {
         guard let date = date(text) else { return "更新時刻不明" }
         let seconds = max(0, now.timeIntervalSince(date))
@@ -122,6 +147,89 @@ struct UsageWindowRow: View {
     }
 }
 
+/// 日別トークン数の推移。ウィジェット拡張でも描くので、外部依存を持たない Path で引く。
+struct Sparkline: View {
+    let values: [Int]
+    var height: CGFloat = 12
+
+    var body: some View {
+        GeometryReader { geo in
+            let maximum = values.max() ?? 0
+            if values.count >= 2, maximum > 0 {
+                let step = geo.size.width / CGFloat(values.count - 1)
+                Path { path in
+                    for (index, value) in values.enumerated() {
+                        // 0 が底、最大値が上端。値の絶対量ではなく推移を見せる。
+                        let ratio = CGFloat(value) / CGFloat(maximum)
+                        let point = CGPoint(
+                            x: CGFloat(index) * step,
+                            y: geo.size.height * (1 - ratio)
+                        )
+                        if index == 0 {
+                            path.move(to: point)
+                        } else {
+                            path.addLine(to: point)
+                        }
+                    }
+                }
+                .stroke(Color.secondary, style: StrokeStyle(lineWidth: 1, lineJoin: .round))
+            }
+        }
+        .frame(height: height)
+        .accessibilityHidden(true)
+    }
+}
+
+/// "today  1.2M  ~$4.31" 相当の 1 行。UsageWindowRow と行の高さを揃える。
+struct TokenRow: View {
+    let label: String
+    let bucket: UsageState.TokenUsage.Bucket?
+    var daily: [Int] = []
+    /// 幅の狭いウィジェットでは内訳とスパークラインを省く。
+    var showsDetail: Bool = true
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 44, alignment: .leading)
+
+            Text(UsageFormat.tokens(bucket?.total))
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .frame(width: 44, alignment: .trailing)
+
+            if showsDetail, daily.count >= 2 {
+                Sparkline(values: daily)
+            } else {
+                Spacer(minLength: 0)
+            }
+
+            if let cost = UsageFormat.cost(bucket?.costUsd) {
+                Text(cost)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 46, alignment: .trailing)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        var parts = ["\(label) \(UsageFormat.tokens(bucket?.total)) トークン"]
+        if let bucket {
+            parts.append("入力 \(UsageFormat.tokens(bucket.input))")
+            parts.append("出力 \(UsageFormat.tokens(bucket.output))")
+            parts.append("キャッシュ \(UsageFormat.tokens(bucket.cacheRead + bucket.cacheWrite))")
+        }
+        if let cost = UsageFormat.cost(bucket?.costUsd) {
+            parts.append("概算 \(cost)")
+        }
+        return parts.joined(separator: "、")
+    }
+}
+
 /// エージェント 1 つ分のブロック。取得失敗時はバーの代わりにステータスを赤字で出す。
 struct AgentSection: View {
     let agent: UsageState.Agent
@@ -129,6 +237,10 @@ struct AgentSection: View {
     /// 表示する枠のラベル。nil なら state.json にある枠をすべて出す。
     /// 指定した枠が state.json に無い場合は、未取得として `--%` の行を出す。
     var windowLabels: [String]?
+    /// 枠の下に出すトークン行。空なら出さない。
+    var metrics: [DisplayPreferences.Metric] = []
+    /// 狭い面ではスパークラインと内訳を省く。
+    var showsMetricDetail: Bool = true
 
     private func visible(_ windows: [UsageState.Window]) -> [UsageState.Window] {
         guard let windowLabels else { return windows }
@@ -150,7 +262,9 @@ struct AgentSection: View {
             }
             .labelStyle(.titleAndIcon)
 
-            if agent.isOK, !visible(agent.orderedWindows).isEmpty {
+            if agent.isOK {
+                // 枠を 1 つも選んでいなくてもトークンだけ出したい場合があるので、
+                // 空でもエラー表示には落とさない。
                 ForEach(visible(agent.orderedWindows), id: \.label) { window in
                     UsageWindowRow(window: window, showsReset: showsReset)
                 }
@@ -171,6 +285,34 @@ struct AgentSection: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.red)
                     .lineLimit(2)
+            }
+
+            // トークンはローカルのログ由来で、利用枠の取得が失敗していても残る。
+            // status に関係なく出す。
+            tokenRows
+        }
+    }
+
+    @ViewBuilder
+    private var tokenRows: some View {
+        if !metrics.isEmpty, let usage = agent.usage {
+            let daily = usage.daily.map(\.total)
+            ForEach(metrics, id: \.self) { metric in
+                switch metric {
+                case .tokensToday:
+                    TokenRow(
+                        label: metric.rowLabel,
+                        bucket: usage.today,
+                        daily: daily,
+                        showsDetail: showsMetricDetail
+                    )
+                case .tokensSession:
+                    TokenRow(
+                        label: metric.rowLabel,
+                        bucket: usage.session,
+                        showsDetail: false
+                    )
+                }
             }
         }
     }

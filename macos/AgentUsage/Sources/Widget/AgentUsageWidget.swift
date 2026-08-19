@@ -74,7 +74,10 @@ struct AgentUsageWidgetView: View {
                 AgentSection(
                     agent: agent,
                     showsReset: showsReset,
-                    windowLabels: windowLabels(for: agent)
+                    windowLabels: windowLabels(for: agent),
+                    metrics: entry.preferences.metrics(scope: .widget, agentID: agent.agent),
+                    // Small はスパークラインを引くだけの幅がない。
+                    showsMetricDetail: family != .systemSmall
                 )
             }
 
@@ -88,9 +91,12 @@ struct AgentUsageWidgetView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    /// 設定で 1 枠も選ばれていないエージェントはウィジェットから省く。
+    /// 設定で枠も表示項目も選ばれていないエージェントはウィジェットから省く。
     private func visibleAgents(in state: UsageState) -> [UsageState.Agent] {
-        state.orderedAgents.filter { !windowLabels(for: $0).isEmpty }
+        state.orderedAgents.filter {
+            !windowLabels(for: $0).isEmpty
+                || !entry.preferences.metrics(scope: .widget, agentID: $0.agent).isEmpty
+        }
     }
 
     /// 選択肢はメニューバー側と同じく、共通の 5h / 7d に state.json 固有の枠を足したもの。
@@ -105,22 +111,26 @@ struct AgentUsageWidgetView: View {
         )
     }
 
+    /// Large だけに出す補足。トークンは AgentSection 側で出すので、
+    /// ここはコンテキスト残量と、statusLine 実測のセッションコストに絞る。
     @ViewBuilder
     private func largeDetails(for state: UsageState) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             ForEach(visibleAgents(in: state), id: \.agent) { agent in
                 if let context = agent.context?.usedPct {
-                    Text("\(agent.label) context \(UsageFormat.percent(context))")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                    detail("\(agent.label) context \(UsageFormat.percent(context))")
                 }
-                if let cost = agent.cost?.totalUsd {
-                    Text("\(agent.label) session $\(String(format: "%.4f", cost))")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                if let cost = UsageFormat.cost(agent.cost?.totalUsd) {
+                    detail("\(agent.label) session \(cost)")
                 }
             }
         }
+    }
+
+    private func detail(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundStyle(.secondary)
     }
 }
 

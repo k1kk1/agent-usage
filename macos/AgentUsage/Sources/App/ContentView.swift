@@ -27,7 +27,11 @@ struct ContentView: View {
 
             if let state = store.state {
                 ForEach(visibleAgents(in: state), id: \.agent) { agent in
-                    AgentSection(agent: agent, windowLabels: windowLabels(for: agent))
+                    AgentSection(
+                        agent: agent,
+                        windowLabels: windowLabels(for: agent),
+                        metrics: display.metrics(scope: .app, agentID: agent.agent)
+                    )
                 }
             } else if let message = store.errorMessage {
                 UsageErrorView(message: message)
@@ -87,9 +91,12 @@ struct ContentView: View {
         .padding(.top, 2)
     }
 
-    /// 設定で 1 枠も選ばれていないエージェントは一覧から省く。
+    /// 設定で枠も表示項目も選ばれていないエージェントは一覧から省く。
     private func visibleAgents(in state: UsageState) -> [UsageState.Agent] {
-        state.orderedAgents.filter { !windowLabels(for: $0).isEmpty }
+        state.orderedAgents.filter {
+            !windowLabels(for: $0).isEmpty
+                || !display.metrics(scope: .app, agentID: $0.agent).isEmpty
+        }
     }
 
     /// 選択肢はメニューバー・ウィジェットと同じく、共通の 5h / 7d に state.json 固有の枠を足したもの。
