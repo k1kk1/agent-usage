@@ -34,7 +34,21 @@ EOF
 
 claude_json="$(fetch_claude_usage)"
 codex_json='{"agent":"codex","label":"Codex","status":"ok","updated_at":"2026-08-09 10:00:00 JST","windows":{"secondary":{"label":"7d","used_pct":12,"reset_at":null}}}'
-write_state "$claude_json" "$codex_json"
+
+# usage も照合対象にするため、collector が実際に出す形をそのまま流し込む。
+# cost_usd を持たない Codex 側も入れて、任意フィールドの取りこぼしを見る。
+claude_usage="$(jq -nc '{
+  today: {date:"2026-08-09", input:1, output:2, cache_write:3, cache_read:4, total:10, cost_usd:0.5},
+  session: {id:"s1", input:1, output:2, cache_write:3, cache_read:4, total:10, cost_usd:0.5},
+  daily: [{date:"2026-08-09", total:10}]
+}')"
+codex_usage="$(jq -nc '{
+  today: {date:"2026-08-09", input:1, output:2, cache_write:0, cache_read:4, total:7},
+  session: null,
+  daily: [{date:"2026-08-09", total:7}]
+}')"
+
+write_state "$claude_json" "$codex_json" "$claude_usage" "$codex_usage"
 
 # 変換結果に context / cost が実際に載っていること。載っていなければ以降の照合が
 # 素通りしてしまうため、まず存在を確かめる。

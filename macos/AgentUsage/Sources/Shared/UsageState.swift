@@ -35,9 +35,10 @@ struct UsageState: Decodable {
         let lastSuccessWindows: [String: Window]?
         let context: Context?
         let cost: Cost?
+        let usage: TokenUsage?
 
         enum CodingKeys: String, CodingKey {
-            case agent, label, status, message, windows, context, cost
+            case agent, label, status, message, windows, context, cost, usage
             case updatedAt = "updated_at"
             case lastSuccessAt = "last_success_at"
             case lastSuccessWindows = "last_success_windows"
@@ -108,6 +109,50 @@ struct UsageState: Decodable {
 
         enum CodingKeys: String, CodingKey {
             case totalUsd = "total_usd"
+        }
+    }
+
+    /// usage-collector.sh が集計したトークン利用数。
+    /// 利用枠と違い API からは取れないので、ローカルのセッションログ由来。
+    struct TokenUsage: Decodable {
+        let today: Bucket?
+        let session: Bucket?
+        let daily: [Day]
+
+        enum CodingKeys: String, CodingKey {
+            case today, session, daily
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            today = try container.decodeIfPresent(Bucket.self, forKey: .today)
+            session = try container.decodeIfPresent(Bucket.self, forKey: .session)
+            daily = try container.decodeIfPresent([Day].self, forKey: .daily) ?? []
+        }
+
+        struct Bucket: Decodable {
+            /// today は集計日、session はセッション ID。どちらか片方だけが入る。
+            let date: String?
+            let id: String?
+            let input: Int
+            let output: Int
+            let cacheWrite: Int
+            let cacheRead: Int
+            let total: Int
+            /// Codex は ChatGPT プランに含まれ単価が無いため入らない。
+            let costUsd: Double?
+
+            enum CodingKeys: String, CodingKey {
+                case date, id, input, output, total
+                case cacheWrite = "cache_write"
+                case cacheRead = "cache_read"
+                case costUsd = "cost_usd"
+            }
+        }
+
+        struct Day: Decodable {
+            let date: String
+            let total: Int
         }
     }
 }

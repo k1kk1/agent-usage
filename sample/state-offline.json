@@ -1,4 +1,5 @@
 {
+  "schema_version": 2,
   "updated_at": "2026-06-22 09:00:00 JST",
   "agents": {
     "claude": {
@@ -7,7 +8,57 @@
       "status": "offline",
       "message": "Claude statusLine JSON not found",
       "updated_at": "2026-06-22 09:00:00 JST",
-      "windows": {}
+      "windows": {},
+      "usage": {
+        "today": {
+          "date": "2026-06-22",
+          "input": 1240,
+          "output": 24800,
+          "cache_write": 148800,
+          "cache_read": 1065160,
+          "total": 1240000,
+          "cost_usd": 4.31
+        },
+        "session": {
+          "id": "4d862133-6d81-5a63-a111-2fef5ee79ca3",
+          "input": 753,
+          "output": 15061,
+          "cache_write": 90369,
+          "cache_read": 646897,
+          "total": 753082,
+          "cost_usd": 0.62
+        },
+        "daily": [
+          {
+            "date": "2026-06-16",
+            "total": 120000
+          },
+          {
+            "date": "2026-06-17",
+            "total": 340000
+          },
+          {
+            "date": "2026-06-18",
+            "total": 210000
+          },
+          {
+            "date": "2026-06-19",
+            "total": 880000
+          },
+          {
+            "date": "2026-06-20",
+            "total": 450000
+          },
+          {
+            "date": "2026-06-21",
+            "total": 1020000
+          },
+          {
+            "date": "2026-06-22",
+            "total": 1240000
+          }
+        ]
+      }
     },
     "codex": {
       "agent": "codex",
@@ -15,8 +66,8 @@
       "status": "parse_error",
       "message": "Codex rate-limit response was not found",
       "updated_at": "2026-06-22 09:00:00 JST",
-      "windows": {}
+      "windows": {},
+      "usage": null
     }
-  },
-  "ports": []
+  }
 }

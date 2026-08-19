@@ -10,6 +10,9 @@ INTERVAL_SECONDS="${AGENT_STATUS_INTERVAL_SECONDS:-60}"
 
 CLAUDE_STATUS_FILE="${CLAUDE_STATUS_FILE:-$STATE_DIR/claude-status.json}"
 
+USAGE_COLLECTOR="${AGENT_USAGE_COLLECTOR:-$SCRIPT_DIR/usage-collector.sh}"
+COLLECT_USAGE="${AGENT_USAGE_COLLECT:-1}"
+
 CODEX_APP_SERVER_COMMAND="${CODEX_APP_SERVER_COMMAND:-codex app-server}"
 # Codex app-server はstdinを即時に閉じると応答前に終了するため、
 # JSON-RPC応答を待つための保持時間を設定する。
@@ -241,9 +244,33 @@ fetch_codex_usage() {
   ' <<<"$response" 2>/dev/null || json_error "codex" "parse_error" "Codex rate-limit response was not understood"
 }
 
+# トークン集計は失敗しても利用枠の表示を止めない。読めなければ空を返す。
+fetch_token_usage() {
+  local agent="$1"
+
+  if [[ "$COLLECT_USAGE" != "1" || ! -r "$USAGE_COLLECTOR" ]]; then
+    printf 'null'
+    return
+  fi
+
+  local out
+  out="$(bash "$USAGE_COLLECTOR" "$agent" 2>/dev/null)" || {
+    printf 'null'
+    return
+  }
+
+  if jq -e . >/dev/null 2>&1 <<<"$out"; then
+    printf '%s' "$out"
+  else
+    printf 'null'
+  fi
+}
+
 write_state() {
   local claude="$1"
   local codex="$2"
+  local claude_usage="${3:-null}"
+  local codex_usage="${4:-null}"
   local tmp_file state_parent previous='{}'
   state_parent="$(dirname "$STATE_FILE")"
   mkdir -p "$state_parent" || return 1
@@ -260,8 +287,14 @@ write_state() {
     --argjson previous "$previous" \
     --argjson claude "$claude" \
     --argjson codex "$codex" \
+    --argjson claude_usage "$claude_usage" \
+    --argjson codex_usage "$codex_usage" \
     '
       def previous_agent($key): $previous.agents[$key] // {};
+      # 集計できなかった時は前回値を残す。ログ読み取りの一時的な失敗で
+      # 表示が消えると、利用枠側より不安定に見えてしまう。
+      def merge_usage($current; $old):
+        if $current == null then ($old.usage // null) else $current end;
       def merge_agent($current; $old):
         if $current.status == "ok" then
           $current + {
@@ -275,11 +308,13 @@ write_state() {
           }
         end;
       {
-        schema_version: 1,
+        schema_version: 2,
         updated_at: $updated_at,
         agents: {
-          claude: merge_agent($claude; previous_agent("claude")),
-          codex: merge_agent($codex; previous_agent("codex"))
+          claude: (merge_agent($claude; previous_agent("claude"))
+            + { usage: merge_usage($claude_usage; previous_agent("claude")) }),
+          codex: (merge_agent($codex; previous_agent("codex"))
+            + { usage: merge_usage($codex_usage; previous_agent("codex")) })
         }
       }
     ' >"$tmp_file" && mv "$tmp_file" "$STATE_FILE"; then
@@ -291,21 +326,30 @@ write_state() {
 }
 
 collect_once() {
-  local tmp_dir claude_file codex_file
-  local claude codex
+  local tmp_dir claude_file codex_file claude_usage_file codex_usage_file
+  local claude codex claude_usage codex_usage
 
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/agent-status.XXXXXX")" || return 1
   claude_file="$tmp_dir/claude.json"
   codex_file="$tmp_dir/codex.json"
 
+  claude_usage_file="$tmp_dir/claude-usage.json"
+  codex_usage_file="$tmp_dir/codex-usage.json"
+
   fetch_claude_usage >"$claude_file" &
   fetch_codex_usage >"$codex_file" &
+  fetch_token_usage claude >"$claude_usage_file" &
+  fetch_token_usage codex >"$codex_usage_file" &
   wait
 
   claude="$(cat "$claude_file" 2>/dev/null || json_error "claude" "error" "No Claude state")"
   codex="$(cat "$codex_file" 2>/dev/null || json_error "codex" "error" "No Codex state")"
+  claude_usage="$(cat "$claude_usage_file" 2>/dev/null)"
+  codex_usage="$(cat "$codex_usage_file" 2>/dev/null)"
+  [[ -n "$claude_usage" ]] || claude_usage=null
+  [[ -n "$codex_usage" ]] || codex_usage=null
 
-  if ! write_state "$claude" "$codex"; then
+  if ! write_state "$claude" "$codex" "$claude_usage" "$codex_usage"; then
     rm -rf "$tmp_dir"
     return 1
   fi
