@@ -107,7 +107,7 @@ struct UsageState: Decodable {
         let totalUsd: Double?
 
         enum CodingKeys: String, CodingKey {
-            case totalUsd = "total_cost_usd"
+            case totalUsd = "total_usd"
         }
     }
 }
