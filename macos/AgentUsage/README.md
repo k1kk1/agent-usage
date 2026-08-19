@@ -28,7 +28,7 @@ cd macos/AgentUsage
 その後、デスクトップを右クリック →「ウィジェットを編集」→ 検索欄に `Agent Usage` で追加します。
 Small / Medium / Large に対応しています。
 
-`AgentUsage.app` は通常のアプリとして Dock とアプリケーションスイッチャーに表示されます。同時に、メニューバーには最も使用率が高いエージェントに応じたアイコンと `33%` のような最大利用率を表示します。「メニューバーを短く表示」を無効にすると、`Claude Code 33%` または `Codex 33%` のようにエージェント名も表示します。クリックすると同じ利用状況をコンパクトに確認でき、外側をクリックすると閉じます。「ログイン時に起動」の設定は本体ウィンドウにのみ表示されます。
+`AgentUsage.app` は通常のアプリとして Dock とアプリケーションスイッチャーに表示されます。同時に、メニューバーにはエージェントごとのアイコンと `33%` のような利用率だけを並べて表示します（アイコンで判別できるためエージェント名は出しません。名前はツールチップと VoiceOver で読めます）。左クリックで同じ利用状況をコンパクトに確認でき、外側をクリックすると閉じます。右クリックすると、表示する枠のチェックボックスと「設定…」「終了」が出ます。「ログイン時に起動」「80%・95%で通知」と表示する枠の設定は、歯車ボタンから開く設定ウィンドウにまとめています。
 
 ## 構成
 
@@ -37,6 +37,7 @@ agent-status-daemon.sh          （リポジトリ直下）
   └─ ~/.cache/agent-status/state.json
        └─ AgentUsage.app        通常アプリ + メニューバー表示。監視してミラー＋ウィジェット更新要求
             └─ ~/Library/Containers/dev.kikki.AgentUsage.Widget/Data/.../state.json
+               ~/Library/Containers/dev.kikki.AgentUsage.Widget/Data/.../preferences.json
                  └─ AgentUsageWidget.appex   ウィジェット描画
 ```
 
@@ -85,11 +86,25 @@ Codex は現在 7 日枠しか返さないため 1 行だけになります。�
 `used_pct` が `null` の枠は `--%` と表示します。
 エージェントの `status` が `ok` 以外のときは、バーの代わりに `message` を赤字で表示します。
 
-メニューバーには全エージェント・全枠のうち最大の使用率を出します。
+アプリ・メニューバー・ウィジェットに出す枠は、それぞれ**設定ウィンドウ**（画面下部の歯車、
+またはメニューバー右クリック →「設定…」）で選びます。メニューバーだけならステータス項目の
+右クリックメニューからも切り替えられ、同じメニューに「設定…」「終了」もあります。
+
+選択肢は UI を揃えるためどのエージェントでも `5h` / `7d`（加えて state.json 固有の枠）で、
+既定はメニューバーが Claude Code `5h` / Codex `7d`、アプリとウィジェットは全枠です。メニューバーは
+複数選ぶと `12% / 33%` のように並べ、選んだ枠が state.json に無い場合は `--%` になります。
+数字だけを出し、エージェント名と枠名はツールチップと VoiceOver に回します。
+アプリの一覧とウィジェットも、選んだ枠が state.json に無ければ `--%` の行を出し、
+1 枠も選ばれていないエージェントだけ表示しません。
+
+選択は UserDefaults に保存し、state.json と同じ経路でウィジェットのコンテナへ
+`preferences.json` としてミラーします（サンドボックス下のウィジェットは UserDefaults を
+共有できないため）。
+一覧の見出しにもメニューバーと同じエージェントアイコンを表示します。
 更新から150秒以上経過したデータは、鮮度表示を橙色で示します。取得に失敗しても、前回成功した
 利用枠があれば薄く表示してエラー理由を併記します。
 
-本体ウィンドウでは「80%・95%で通知」を有効にすると、各エージェント・各利用枠がしきい値を
+設定ウィンドウの「80%・95%で通知」を有効にすると、各エージェント・各利用枠がしきい値を
 初めて超えた時だけ通知します。同じ枠が一度下がるまで、同じしきい値を繰り返し通知しません。
 
 ## アイコン
@@ -103,7 +118,17 @@ Codex は現在 7 日枠しか返さないため 1 行だけになります。�
 swift Tools/make-icon.swift Sources/App/Assets.xcassets/AppIcon.appiconset
 ```
 
-メニューバーのアイコンは Claude Code に `sparkles`、Codex に `chevron.left.forwardslash.chevron.right`、状態未取得時に `gauge.with.dots.needle.33percent` を使っています。
+エージェントのアイコンは、公式アプリが同梱するメニューバー用テンプレート画像を実行時に読み込みます。
+
+```text
+Claude Code: /Applications/Claude.app/Contents/Resources/TrayIconTemplate@2x.png
+Codex:       /Applications/ChatGPT.app/Contents/Resources/chatgptTemplate@2x.png
+```
+
+リポジトリに他社ロゴを持ち込まないため、ビルド時ではなく実行時に読みます。読めない環境
+（公式アプリ未インストール、ウィジェットのサンドボックス下など）では SF Symbols
+（Claude Code に `sparkles`、Codex に `chevron.left.forwardslash.chevron.right`、状態未取得時に
+`gauge.with.dots.needle.33percent`）へ自動でフォールバックします。
 
 ## 開発
 

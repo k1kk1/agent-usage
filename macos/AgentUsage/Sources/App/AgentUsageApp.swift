@@ -20,14 +20,19 @@ struct AgentUsageApp {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = UsageStore()
+    private let displayPreferences = DisplayPreferencesStore()
     private lazy var alertManager = UsageAlertManager(store: store)
     private var mainWindow: NSWindow?
+    private var settingsWindow: NSWindow?
     private var statusItemController: StatusItemController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        AppPreferences.registerDefaults()
         configureMainWindow()
-        statusItemController = StatusItemController(store: store, alerts: alertManager)
+        statusItemController = StatusItemController(
+            store: store,
+            display: displayPreferences,
+            openSettings: { [weak self] in self?.showSettingsWindow() }
+        )
         showMainWindow()
     }
 
@@ -42,21 +47,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func configureMainWindow() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 380, height: 360),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            contentRect: .zero,
+            styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Agent Usage"
-        window.minSize = NSSize(width: 360, height: 280)
-        window.contentView = NSHostingView(
-            rootView: ContentView()
-                .environmentObject(store)
-                .environmentObject(alertManager)
+        let hosting = NSHostingController(
+            rootView: ContentView(
+                variant: .window,
+                openSettings: { [weak self] in self?.showSettingsWindow() }
+            )
+            .environmentObject(store)
+            .environmentObject(displayPreferences)
         )
+        // 内容の高さちょうどに追従させる。固定サイズだと下に余白が残る。
+        hosting.sizingOptions = [.preferredContentSize]
+        window.contentViewController = hosting
         window.isReleasedWhenClosed = false
         window.center()
         mainWindow = window
+    }
+
+    private func showSettingsWindow() {
+        if settingsWindow == nil {
+            let window = NSWindow(
+                contentRect: .zero,
+                styleMask: [.titled, .closable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "設定"
+            let hosting = NSHostingController(
+                rootView: SettingsView()
+                    .environmentObject(store)
+                    .environmentObject(alertManager)
+                    .environmentObject(displayPreferences)
+            )
+            hosting.sizingOptions = [.preferredContentSize]
+            window.contentViewController = hosting
+            window.isReleasedWhenClosed = false
+            window.center()
+            settingsWindow = window
+        }
+        settingsWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func showMainWindow() {
@@ -71,17 +106,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 private final class StatusItemController: NSObject, NSPopoverDelegate {
     private let store: UsageStore
-    private let alerts: UsageAlertManager
+    private let display: DisplayPreferencesStore
+    private let openSettings: () -> Void
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
     private var stateObservation: AnyCancellable?
-    private var preferencesObservation: AnyCancellable?
+    private var displayObservation: AnyCancellable?
     private var localMouseMonitor: Any?
     private var globalMouseMonitor: Any?
 
-    init(store: UsageStore, alerts: UsageAlertManager) {
+    init(
+        store: UsageStore,
+        display: DisplayPreferencesStore,
+        openSettings: @escaping () -> Void
+    ) {
         self.store = store
-        self.alerts = alerts
+        self.display = display
+        self.openSettings = openSettings
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
         configureStatusItem()
@@ -89,18 +130,17 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
         stateObservation = store.$state.sink { [weak self] state in
             self?.updateStatusItem(state: state)
         }
-        preferencesObservation = NotificationCenter.default
-            .publisher(for: UserDefaults.didChangeNotification)
-            .sink { [weak self] _ in
-                guard let self else { return }
-                self.updateStatusItem(state: self.store.state)
-            }
+        // 設定ウィンドウ側の変更もメニューバーへ反映する。
+        displayObservation = display.$preferences.sink { [weak self] _ in
+            guard let self else { return }
+            DispatchQueue.main.async { self.updateStatusItem(state: self.store.state) }
+        }
         updateStatusItem(state: store.state)
     }
 
     deinit {
         stateObservation?.cancel()
-        preferencesObservation?.cancel()
+        displayObservation?.cancel()
         if let localMouseMonitor {
             NSEvent.removeMonitor(localMouseMonitor)
         }
@@ -112,53 +152,214 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
 
     private func configureStatusItem() {
         guard let button = statusItem.button else { return }
-        button.image = NSImage(
-            systemSymbolName: "gauge.with.dots.needle.33percent",
-            accessibilityDescription: "Agent Usage"
-        )
-        button.imagePosition = .imageLeading
-        button.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        button.imagePosition = .imageOnly
         button.target = self
-        button.action = #selector(togglePopover)
+        button.action = #selector(handleClick)
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         button.toolTip = "Agent Usage"
     }
 
     private func configurePopover() {
         popover.behavior = .transient
         popover.delegate = self
-        popover.contentSize = NSSize(width: 340, height: 350)
-        popover.contentViewController = NSHostingController(
-            rootView: ContentView(showsLaunchAtLogin: false)
-                .environmentObject(store)
-                .environmentObject(alerts)
+        let hosting = NSHostingController(
+            rootView: ContentView(
+                variant: .popover,
+                openSettings: { [weak self] in
+                    self?.popover.performClose(nil)
+                    self?.openSettings()
+                }
+            )
+            .environmentObject(store)
+            .environmentObject(display)
         )
+        // 固定サイズだと内容より縦に余る。SwiftUI 側の必要サイズへ追従させる。
+        hosting.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = hosting
+    }
+
+    /// メニューバーに並べる1エージェント分の表示内容。
+    private struct StatusEntry {
+        let agentID: String
+        let label: String
+        /// 右クリックメニューで選ばれている枠だけを、その順で持つ。
+        let windows: [(label: String, usedPct: Double?)]
+
+        var percentText: String {
+            windows
+                .map { $0.usedPct.map(UsageFormat.percent) ?? "--%" }
+                .joined(separator: " / ")
+        }
+
+        var detailText: String {
+            let detail = windows
+                .map { "\($0.label) \($0.usedPct.map(UsageFormat.percent) ?? "--%")" }
+                .joined(separator: " ")
+            return "\(label) \(detail)"
+        }
+    }
+
+    /// 右クリックメニューに並べる枠の候補。共通の 5h / 7d に、state.json 固有の枠を足す。
+    private func menuWindowLabels(for agent: UsageState.Agent) -> [String] {
+        let extras = agent.orderedWindows
+            .map(\.label)
+            .filter { !DisplayPreferences.commonWindows.contains($0) }
+        return DisplayPreferences.commonWindows + extras
     }
 
     private func updateStatusItem(state: UsageState?) {
-        let mostUrgent = state?.orderedAgents
-            .filter(\.isOK)
-            .flatMap { agent in
-                agent.orderedWindows.compactMap { window in
-                    window.usedPct.map {
-                        (agentID: agent.agent, agentLabel: agent.label, usedPct: $0)
-                    }
-                }
-            }
-            .max { $0.usedPct < $1.usedPct }
+        let entries: [StatusEntry] = state?.orderedAgents.compactMap { agent in
+            let available = menuWindowLabels(for: agent)
+            let selected = display.windows(scope: .menuBar, agentID: agent.agent, available: available)
+            guard !selected.isEmpty else { return nil }
 
-        let fullTitle = mostUrgent.map {
-            "\($0.agentLabel) \(UsageFormat.percent($0.usedPct))"
-        } ?? "Agent Usage --%"
-        let compactTitle = mostUrgent.map {
-            UsageFormat.percent($0.usedPct)
-        } ?? "--%"
-        let title = UserDefaults.standard.bool(forKey: AppPreferences.compactStatusItemKey)
-            ? compactTitle
-            : fullTitle
-        statusItem.button?.image = statusIcon(for: mostUrgent?.agentID)
-        statusItem.button?.title = title
+            let windows = selected.map { label -> (label: String, usedPct: Double?) in
+                let window = agent.orderedWindows.first { $0.label == label }
+                return (label, agent.isOK ? window?.usedPct : nil)
+            }
+            return StatusEntry(agentID: agent.agent, label: agent.label, windows: windows)
+        } ?? []
+
+        // ツールチップと VoiceOver 向けにはエージェント名と枠名を残す。
+        let fullTitle = entries.isEmpty
+            ? "Agent Usage --%"
+            : entries.map(\.detailText).joined(separator: "  ")
+
+        statusItem.button?.title = ""
+        statusItem.button?.image = statusBarImage(entries: entries)
         statusItem.button?.setAccessibilityLabel("Agent Usage: \(fullTitle)")
         statusItem.button?.toolTip = "Agent Usage\n\(fullTitle)"
+    }
+
+    /// アイコンと数値をまとめて1枚のテンプレート画像へ描画する。
+    /// NSStatusBarButton の image/title 併用では1エージェントしか出せず、
+    /// テンプレート画像ならライト/ダークのメニューバー色にも自動追従する。
+    private func statusBarImage(entries: [StatusEntry]) -> NSImage {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        let textAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.black
+        ]
+        let segments: [(icon: NSImage?, text: String)] = entries.isEmpty
+            ? [(statusIcon(for: nil), "--%")]
+            : entries.map { (statusIcon(for: $0.agentID), $0.percentText) }
+
+        let iconGap: CGFloat = 3
+        let segmentGap: CGFloat = 8
+        var width: CGFloat = 0
+        var measured: [(icon: NSImage?, text: NSString, textSize: NSSize)] = []
+        for (index, segment) in segments.enumerated() {
+            let text = segment.text as NSString
+            let textSize = text.size(withAttributes: textAttributes)
+            if index > 0 { width += segmentGap }
+            if let icon = segment.icon { width += icon.size.width + iconGap }
+            width += textSize.width
+            measured.append((segment.icon, text, textSize))
+        }
+
+        let height = NSStatusBar.system.thickness - 6
+        let image = NSImage(size: NSSize(width: max(width.rounded(.up), 1), height: height))
+        image.lockFocus()
+        var x: CGFloat = 0
+        for (index, segment) in measured.enumerated() {
+            if index > 0 { x += segmentGap }
+            if let icon = segment.icon {
+                let rect = NSRect(
+                    x: x,
+                    y: ((height - icon.size.height) / 2).rounded(),
+                    width: icon.size.width,
+                    height: icon.size.height
+                )
+                icon.draw(in: rect)
+                x += icon.size.width + iconGap
+            }
+            segment.text.draw(
+                at: NSPoint(x: x, y: ((height - segment.textSize.height) / 2).rounded()),
+                withAttributes: textAttributes
+            )
+            x += segment.textSize.width
+        }
+        image.unlockFocus()
+        image.isTemplate = true
+        return image
+    }
+
+    /// 左クリックはポップオーバー、右クリック（と control+クリック）はメニュー。
+    @objc private func handleClick() {
+        let event = NSApp.currentEvent
+        let isSecondary = event?.type == .rightMouseUp
+            || event?.modifierFlags.contains(.control) == true
+        if isSecondary {
+            showContextMenu()
+        } else {
+            togglePopover()
+        }
+    }
+
+    private func showContextMenu() {
+        guard let button = statusItem.button else { return }
+        if popover.isShown { popover.performClose(nil) }
+        contextMenu().popUp(
+            positioning: nil,
+            at: NSPoint(x: 0, y: button.bounds.minY - 4),
+            in: button
+        )
+    }
+
+    /// 表示する枠のチェックボックスと終了を出す。
+    private func contextMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        for agent in store.state?.orderedAgents ?? [] {
+            let header = NSMenuItem(title: agent.label, action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+
+            let available = menuWindowLabels(for: agent)
+            for label in available {
+                let item = NSMenuItem(
+                    title: label,
+                    action: #selector(toggleStatusWindow(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.indentationLevel = 1
+                item.representedObject = [agent.agent, label] + available
+                item.state = display.isSelected(
+                    scope: .menuBar,
+                    agentID: agent.agent,
+                    window: label
+                ) ? .on : .off
+                menu.addItem(item)
+            }
+            menu.addItem(.separator())
+        }
+
+        let settings = NSMenuItem(title: "設定…", action: #selector(showSettings), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
+        menu.addItem(.separator())
+
+        let quit = NSMenuItem(title: "終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quit.target = NSApp
+        menu.addItem(quit)
+        return menu
+    }
+
+    @objc private func showSettings() {
+        openSettings()
+    }
+
+    @objc private func toggleStatusWindow(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? [String], payload.count >= 2 else { return }
+        display.toggle(
+            scope: .menuBar,
+            agentID: payload[0],
+            window: payload[1],
+            available: Array(payload.dropFirst(2))
+        )
+        updateStatusItem(state: store.state)
     }
 
     @objc private func togglePopover() {
@@ -196,22 +397,14 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     private func statusIcon(for agentID: String?) -> NSImage? {
-        let symbolName: String
-        let description: String
-        switch agentID {
-        case "claude":
-            symbolName = "sparkles"
-            description = "Claude Code"
-        case "codex":
-            symbolName = "chevron.left.forwardslash.chevron.right"
-            description = "Codex"
-        default:
-            symbolName = "gauge.with.dots.needle.33percent"
-            description = "Agent Usage"
+        // 公式アプリのトレイ用アイコンが読めればそれを優先する。
+        if let official = AgentIcon.officialImage(for: agentID, pointSize: 12) {
+            return official
         }
 
-        let configuration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
-        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: description)?
+        let symbolName = AgentSymbol.name(for: agentID)
+        let configuration = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
+        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: agentID ?? "Agent Usage")?
             .withSymbolConfiguration(configuration)
         image?.isTemplate = true
         return image

@@ -6,6 +6,7 @@ struct UsageEntry: TimelineEntry {
     let date: Date
     let state: UsageState?
     let errorMessage: String?
+    var preferences: DisplayPreferences = .standard
 }
 
 struct UsageProvider: TimelineProvider {
@@ -24,11 +25,17 @@ struct UsageProvider: TimelineProvider {
     }
 
     private func makeEntry() -> UsageEntry {
+        let preferences = DisplayPreferences.loadMirror()
         switch UsageStateLoader.loadMirror() {
         case .success(let state):
-            return UsageEntry(date: Date(), state: state, errorMessage: nil)
+            return UsageEntry(date: Date(), state: state, errorMessage: nil, preferences: preferences)
         case .failure(let error):
-            return UsageEntry(date: Date(), state: nil, errorMessage: error.localizedDescription)
+            return UsageEntry(
+                date: Date(),
+                state: nil,
+                errorMessage: error.localizedDescription,
+                preferences: preferences
+            )
         }
     }
 }
@@ -63,8 +70,12 @@ struct AgentUsageWidgetView: View {
                     .foregroundStyle(UsageFormat.isStale(state.updatedAt) ? Color.orange : Color.secondary)
             }
 
-            ForEach(state.orderedAgents, id: \.agent) { agent in
-                AgentSection(agent: agent, showsReset: showsReset)
+            ForEach(visibleAgents(in: state), id: \.agent) { agent in
+                AgentSection(
+                    agent: agent,
+                    showsReset: showsReset,
+                    windowLabels: windowLabels(for: agent)
+                )
             }
 
             if family == .systemLarge {
@@ -77,10 +88,27 @@ struct AgentUsageWidgetView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    /// 設定で 1 枠も選ばれていないエージェントはウィジェットから省く。
+    private func visibleAgents(in state: UsageState) -> [UsageState.Agent] {
+        state.orderedAgents.filter { !windowLabels(for: $0).isEmpty }
+    }
+
+    /// 選択肢はメニューバー側と同じく、共通の 5h / 7d に state.json 固有の枠を足したもの。
+    private func windowLabels(for agent: UsageState.Agent) -> [String] {
+        let extras = agent.orderedWindows
+            .map(\.label)
+            .filter { !DisplayPreferences.commonWindows.contains($0) }
+        return entry.preferences.windows(
+            scope: .widget,
+            agentID: agent.agent,
+            available: DisplayPreferences.commonWindows + extras
+        )
+    }
+
     @ViewBuilder
     private func largeDetails(for state: UsageState) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            ForEach(state.orderedAgents, id: \.agent) { agent in
+            ForEach(visibleAgents(in: state), id: \.agent) { agent in
                 if let context = agent.context?.usedPct {
                     Text("\(agent.label) context \(UsageFormat.percent(context))")
                         .font(.system(size: 10, design: .monospaced))

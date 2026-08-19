@@ -13,23 +13,31 @@ import Foundation
 enum SharedPaths {
     static let widgetBundleID = "dev.kikki.AgentUsage.Widget"
     static let mirrorFileName = "state.json"
+    /// 表示する枠の選択。state.json と同じ経路でウィジェットへ渡す。
+    static let preferencesFileName = "preferences.json"
 
     private static let containerRelativePath = "Library/Application Support/AgentUsage"
 
     /// ウィジェット側。サンドボックス下では NSHomeDirectory() が自身のコンテナ Data を指す。
-    static var widgetMirrorURL: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(containerRelativePath)
-            .appendingPathComponent(mirrorFileName)
-    }
+    static var widgetMirrorURL: URL { widgetURL(for: mirrorFileName) }
+    static var widgetPreferencesURL: URL { widgetURL(for: preferencesFileName) }
 
     /// ホストアプリ側。ウィジェットのコンテナを絶対パスで指す。
-    static var hostMirrorURL: URL {
+    static var hostMirrorURL: URL { hostURL(for: mirrorFileName) }
+    static var hostPreferencesURL: URL { hostURL(for: preferencesFileName) }
+
+    private static func widgetURL(for fileName: String) -> URL {
+        URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(containerRelativePath)
+            .appendingPathComponent(fileName)
+    }
+
+    private static func hostURL(for fileName: String) -> URL {
         URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Library/Containers")
             .appendingPathComponent(widgetBundleID)
             .appendingPathComponent("Data")
             .appendingPathComponent(containerRelativePath)
-            .appendingPathComponent(mirrorFileName)
+            .appendingPathComponent(fileName)
     }
 }

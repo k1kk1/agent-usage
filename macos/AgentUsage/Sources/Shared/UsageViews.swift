@@ -10,6 +10,17 @@ enum UsagePalette {
     }
 }
 
+/// エージェントごとの SF Symbols 名。メニューバーと一覧で同じ絵柄を使う。
+enum AgentSymbol {
+    static func name(for agentID: String?) -> String {
+        switch agentID {
+        case "claude": return "sparkles"
+        case "codex": return "chevron.left.forwardslash.chevron.right"
+        default: return "gauge.with.dots.needle.33percent"
+        }
+    }
+}
+
 enum UsageFormat {
     /// daemon が書く "2026-07-31 17:20:00 JST" 形式。
     private static let stateFormatter: DateFormatter = {
@@ -115,22 +126,39 @@ struct UsageWindowRow: View {
 struct AgentSection: View {
     let agent: UsageState.Agent
     var showsReset: Bool = true
+    /// 表示する枠のラベル。nil なら state.json にある枠をすべて出す。
+    /// 指定した枠が state.json に無い場合は、未取得として `--%` の行を出す。
+    var windowLabels: [String]?
+
+    private func visible(_ windows: [UsageState.Window]) -> [UsageState.Window] {
+        guard let windowLabels else { return windows }
+        return windowLabels.map { label in
+            windows.first { $0.label == label }
+                ?? UsageState.Window(label: label, usedPct: nil, resetAt: nil)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(agent.label)
-                .font(.system(size: 11, weight: .semibold))
-                .lineLimit(1)
+            Label {
+                Text(agent.label)
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+            } icon: {
+                AgentIconView(agentID: agent.agent, size: 11)
+                    .foregroundStyle(.secondary)
+            }
+            .labelStyle(.titleAndIcon)
 
-            if agent.isOK, !agent.orderedWindows.isEmpty {
-                ForEach(agent.orderedWindows, id: \.label) { window in
+            if agent.isOK, !visible(agent.orderedWindows).isEmpty {
+                ForEach(visible(agent.orderedWindows), id: \.label) { window in
                     UsageWindowRow(window: window, showsReset: showsReset)
                 }
             } else if agent.hasStaleUsage {
                 Text("取得失敗・前回の成功値")
                     .font(.system(size: 9))
                     .foregroundStyle(.secondary)
-                ForEach(agent.orderedLastSuccessWindows, id: \.label) { window in
+                ForEach(visible(agent.orderedLastSuccessWindows), id: \.label) { window in
                     UsageWindowRow(window: window, showsReset: showsReset)
                         .opacity(0.5)
                 }
