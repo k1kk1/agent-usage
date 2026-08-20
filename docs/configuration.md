@@ -119,7 +119,7 @@ Claude Code の設定ファイルに statusLine コマンドを追加してく�
 {
   "statusLine": {
     "type": "command",
-    "command": "/Users/kikki/src/agent-usage/claude-status-line.sh",
+    "command": "/path/to/agent-usage/claude-status-line.sh",
     "refreshInterval": 5
   }
 }

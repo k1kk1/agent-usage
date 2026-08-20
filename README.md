@@ -59,11 +59,13 @@ Claude Code は statusLine から渡される JSON を読みます。Claude Code
 {
   "statusLine": {
     "type": "command",
-    "command": "/Users/kikki/src/agent-usage/claude-status-line.sh",
+    "command": "/path/to/agent-usage/claude-status-line.sh",
     "refreshInterval": 5
   }
 }
 ```
+
+`command` は絶対パスで書いてください（`~` は展開されません）。
 
 ## テスト表示
 
@@ -86,14 +88,14 @@ Claude Code は statusLine から渡される JSON を読みます。Claude Code
 cmux のペインではこれだけ起動してください。
 
 ```sh
-cd /Users/kikki/src/agent-usage
+cd /path/to/agent-usage
 ./agent-status-pane.sh
 ```
 
 tmux なら例として:
 
 ```sh
-tmux split-window -h -l 48 'cd /Users/kikki/src/agent-usage && ./agent-status-pane.sh'
+tmux split-window -h -l 48 'cd /path/to/agent-usage && ./agent-status-pane.sh'
 ```
 
 ## ファイル構成
@@ -170,3 +172,16 @@ statusLine の仕様: https://code.claude.com/docs/ja/statusline
 ```sh
 bash tests/run.sh
 ```
+
+## ライセンス
+
+MIT License です。詳細は [LICENSE](LICENSE) を参照してください。
+
+## 商標について
+
+このリポジトリは第三者のロゴ画像を同梱していません。macOS アプリは、インストール済みの
+公式アプリが持つメニューバー用テンプレート画像を**実行時に**読み込み、読めない環境では
+SF Symbols にフォールバックします（詳細は [macos/AgentUsage/README.md](macos/AgentUsage/README.md)）。
+
+Claude、Claude Code は Anthropic の、ChatGPT、Codex は OpenAI の商標です。本プロジェクトは
+いずれの企業とも関係がなく、公認・後援もされていません。
