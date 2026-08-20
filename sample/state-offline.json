@@ -1,0 +1,109 @@
+{
+  "schema_version": 2,
+  "updated_at": "2026-06-22 09:00:00 JST",
+  "agents": {
+    "claude": {
+      "agent": "claude",
+      "label": "Claude Code",
+      "status": "offline",
+      "message": "Claude statusLine JSON not found",
+      "updated_at": "2026-06-22 09:00:00 JST",
+      "windows": {},
+      "usage": {
+        "today": {
+          "date": "2026-06-22",
+          "input": 1240,
+          "output": 24800,
+          "cache_write": 148800,
+          "cache_read": 1065160,
+          "total": 1240000,
+          "cost_usd": 4.31
+        },
+        "session": {
+          "id": "4d862133-6d81-5a63-a111-2fef5ee79ca3",
+          "input": 753,
+          "output": 15061,
+          "cache_write": 90369,
+          "cache_read": 646897,
+          "total": 753082,
+          "cost_usd": 0.62
+        },
+        "daily": [
+          {
+            "date": "2026-06-16",
+            "input": 0,
+            "output": 1200,
+            "cache_write": 4800,
+            "cache_read": 114000,
+            "total": 120000,
+            "cost_usd": 0.42
+          },
+          {
+            "date": "2026-06-17",
+            "input": 0,
+            "output": 3400,
+            "cache_write": 13600,
+            "cache_read": 323000,
+            "total": 340000,
+            "cost_usd": 1.19
+          },
+          {
+            "date": "2026-06-18",
+            "input": 0,
+            "output": 2100,
+            "cache_write": 8400,
+            "cache_read": 199500,
+            "total": 210000,
+            "cost_usd": 0.735
+          },
+          {
+            "date": "2026-06-19",
+            "input": 0,
+            "output": 8800,
+            "cache_write": 35200,
+            "cache_read": 836000,
+            "total": 880000,
+            "cost_usd": 3.08
+          },
+          {
+            "date": "2026-06-20",
+            "input": 0,
+            "output": 4500,
+            "cache_write": 18000,
+            "cache_read": 427500,
+            "total": 450000,
+            "cost_usd": 1.575
+          },
+          {
+            "date": "2026-06-21",
+            "input": 0,
+            "output": 10200,
+            "cache_write": 40800,
+            "cache_read": 969000,
+            "total": 1020000,
+            "cost_usd": 3.57
+          },
+          {
+            "date": "2026-06-22",
+            "input": 0,
+            "output": 12400,
+            "cache_write": 49600,
+            "cache_read": 1178000,
+            "total": 1240000,
+            "cost_usd": 4.34
+          }
+        ],
+        "recent_5h": null
+      }
+    },
+    "codex": {
+      "agent": "codex",
+      "label": "Codex",
+      "status": "parse_error",
+      "message": "Codex rate-limit response was not found",
+      "updated_at": "2026-06-22 09:00:00 JST",
+      "windows": {},
+      "usage": null
+    }
+  }
+}

@@ -1,0 +1,212 @@
+{
+  "schema_version": 2,
+  "updated_at": "2026-06-22 12:00:00 JST",
+  "agents": {
+    "claude": {
+      "agent": "claude",
+      "label": "Claude Code",
+      "status": "ok",
+      "updated_at": "2026-06-22 12:00:00 JST",
+      "windows": {
+        "primary": {
+          "label": "5h",
+          "used_pct": 50,
+          "reset_at": "2026-06-22 17:00:00 JST"
+        },
+        "secondary": {
+          "label": "7d",
+          "used_pct": 63,
+          "reset_at": "2026-06-28 12:00:00 JST"
+        }
+      },
+      "usage": {
+        "today": {
+          "date": "2026-06-22",
+          "input": 1240,
+          "output": 24800,
+          "cache_write": 148800,
+          "cache_read": 1065160,
+          "total": 1240000,
+          "cost_usd": 4.31
+        },
+        "session": {
+          "id": "4d862133-6d81-5a63-a111-2fef5ee79ca3",
+          "input": 753,
+          "output": 15061,
+          "cache_write": 90369,
+          "cache_read": 646897,
+          "total": 753082,
+          "cost_usd": 0.62
+        },
+        "daily": [
+          {
+            "date": "2026-06-16",
+            "input": 0,
+            "output": 1200,
+            "cache_write": 4800,
+            "cache_read": 114000,
+            "total": 120000,
+            "cost_usd": 0.42
+          },
+          {
+            "date": "2026-06-17",
+            "input": 0,
+            "output": 3400,
+            "cache_write": 13600,
+            "cache_read": 323000,
+            "total": 340000,
+            "cost_usd": 1.19
+          },
+          {
+            "date": "2026-06-18",
+            "input": 0,
+            "output": 2100,
+            "cache_write": 8400,
+            "cache_read": 199500,
+            "total": 210000,
+            "cost_usd": 0.735
+          },
+          {
+            "date": "2026-06-19",
+            "input": 0,
+            "output": 8800,
+            "cache_write": 35200,
+            "cache_read": 836000,
+            "total": 880000,
+            "cost_usd": 3.08
+          },
+          {
+            "date": "2026-06-20",
+            "input": 0,
+            "output": 4500,
+            "cache_write": 18000,
+            "cache_read": 427500,
+            "total": 450000,
+            "cost_usd": 1.575
+          },
+          {
+            "date": "2026-06-21",
+            "input": 0,
+            "output": 10200,
+            "cache_write": 40800,
+            "cache_read": 969000,
+            "total": 1020000,
+            "cost_usd": 3.57
+          },
+          {
+            "date": "2026-06-22",
+            "input": 0,
+            "output": 12400,
+            "cache_write": 49600,
+            "cache_read": 1178000,
+            "total": 1240000,
+            "cost_usd": 4.34
+          }
+        ],
+        "recent_5h": {
+          "input": 496,
+          "output": 9920,
+          "cache_write": 59520,
+          "cache_read": 426064,
+          "total": 496000,
+          "cost_usd": 2
+        }
+      }
+    },
+    "codex": {
+      "agent": "codex",
+      "label": "Codex",
+      "status": "ok",
+      "updated_at": "2026-06-22 12:00:00 JST",
+      "windows": {
+        "primary": {
+          "label": "5h",
+          "used_pct": 72,
+          "reset_at": "2026-06-22 18:00:00 JST"
+        },
+        "secondary": {
+          "label": "7d",
+          "used_pct": 79,
+          "reset_at": "2026-06-28 13:00:00 JST"
+        }
+      },
+      "usage": {
+        "today": {
+          "date": "2026-06-22",
+          "input": 210,
+          "output": 4200,
+          "cache_write": 25200,
+          "cache_read": 180390,
+          "total": 210000
+        },
+        "session": {
+          "id": "0198f2ac-3c41-7bd2-9a55-1c3d5e7f9021",
+          "input": 128,
+          "output": 2568,
+          "cache_write": 15408,
+          "cache_read": 110295,
+          "total": 128400
+        },
+        "daily": [
+          {
+            "date": "2026-06-16",
+            "input": 0,
+            "output": 400,
+            "cache_write": 1600,
+            "cache_read": 38000,
+            "total": 40000
+          },
+          {
+            "date": "2026-06-17",
+            "input": 0,
+            "output": 620,
+            "cache_write": 2480,
+            "cache_read": 58900,
+            "total": 62000
+          },
+          {
+            "date": "2026-06-18",
+            "input": 0,
+            "output": 510,
+            "cache_write": 2040,
+            "cache_read": 48450,
+            "total": 51000
+          },
+          {
+            "date": "2026-06-19",
+            "input": 0,
+            "output": 1200,
+            "cache_write": 4800,
+            "cache_read": 114000,
+            "total": 120000
+          },
+          {
+            "date": "2026-06-20",
+            "input": 0,
+            "output": 880,
+            "cache_write": 3520,
+            "cache_read": 83600,
+            "total": 88000
+          },
+          {
+            "date": "2026-06-21",
+            "input": 0,
+            "output": 1430,
+            "cache_write": 5720,
+            "cache_read": 135850,
+            "total": 143000
+          },
+          {
+            "date": "2026-06-22",
+            "input": 0,
+            "output": 2100,
+            "cache_write": 8400,
+            "cache_read": 199500,
+            "total": 210000
+          }
+        ],
+        "recent_5h": null
+      }
+    }
+  }
+}
