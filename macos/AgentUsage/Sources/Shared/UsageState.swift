@@ -117,10 +117,15 @@ struct UsageState: Decodable {
     struct TokenUsage: Decodable {
         let today: Bucket?
         let session: Bucket?
-        let daily: [Day]
+        /// 直近 5 時間ぶん。5h 枠の使用率と突き合わせて「1 日の目安」を出すのに使う。
+        let recent5h: Bucket?
+        /// 日別の内訳。表示側が「直近 N 日」を自由に合算できるよう、合計だけでなく
+        /// today と同じ内訳を持つ。
+        let daily: [Bucket]
 
         enum CodingKeys: String, CodingKey {
             case today, session, daily
+            case recent5h = "recent_5h"
         }
 
         init(from decoder: Decoder) throws {
@@ -128,7 +133,8 @@ struct UsageState: Decodable {
             // 集計側のスキーマが先に進んでも、利用枠の表示は生かしておきたい。
             today = (try? container.decodeIfPresent(Bucket.self, forKey: .today)) ?? nil
             session = (try? container.decodeIfPresent(Bucket.self, forKey: .session)) ?? nil
-            daily = ((try? container.decodeIfPresent([Day].self, forKey: .daily)) ?? nil) ?? []
+            recent5h = (try? container.decodeIfPresent(Bucket.self, forKey: .recent5h)) ?? nil
+            daily = ((try? container.decodeIfPresent([Bucket].self, forKey: .daily)) ?? nil) ?? []
         }
 
         struct Bucket: Decodable {
@@ -150,6 +156,27 @@ struct UsageState: Decodable {
                 case costUsd = "cost_usd"
             }
 
+            /// 期間の合算など、表示側で組み立てる用。
+            init(
+                date: String?,
+                id: String?,
+                input: Int,
+                output: Int,
+                cacheWrite: Int,
+                cacheRead: Int,
+                total: Int,
+                costUsd: Double?
+            ) {
+                self.date = date
+                self.id = id
+                self.input = input
+                self.output = output
+                self.cacheWrite = cacheWrite
+                self.cacheRead = cacheRead
+                self.total = total
+                self.costUsd = costUsd
+            }
+
             /// 数値が 1 つ欠けただけで Agent 全体のデコードが落ち、利用枠まで
             /// 表示されなくなるのは割に合わない。欠けは 0 として読む。
             init(from decoder: Decoder) throws {
@@ -163,11 +190,6 @@ struct UsageState: Decodable {
                 total = try container.decodeIfPresent(Int.self, forKey: .total) ?? 0
                 costUsd = try container.decodeIfPresent(Double.self, forKey: .costUsd)
             }
-        }
-
-        struct Day: Decodable {
-            let date: String
-            let total: Int
         }
     }
 }

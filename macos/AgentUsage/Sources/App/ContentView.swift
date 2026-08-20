@@ -30,7 +30,9 @@ struct ContentView: View {
                     AgentSection(
                         agent: agent,
                         windowLabels: windowLabels(for: agent),
-                        metrics: display.metrics(scope: .app, agentID: agent.agent)
+                        metrics: display.metrics(scope: .app, agentID: agent.agent),
+                        plan: display.preferences.plan(agentID: agent.agent),
+                        showsChart: true
                     )
                 }
             } else if let message = store.errorMessage {

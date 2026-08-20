@@ -223,11 +223,17 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
             }
 
             // トークンはローカルのログ由来なので、利用枠の取得が失敗していても出す。
+            let plan = display.preferences.plan(agentID: agent.agent)
             let tokens = display.metrics(scope: .menuBar, agentID: agent.agent)
                 .map { metric -> (label: String, total: Int?) in
                     switch metric {
-                    case .tokensToday: return (metric.rowLabel, agent.usage?.today?.total)
-                    case .tokensSession: return (metric.rowLabel, agent.usage?.session?.total)
+                    case .tokensPeriod:
+                        return (
+                            metric.rowLabel(plan: plan),
+                            TokenPeriod.bucket(usage: agent.usage, plan: plan)?.total
+                        )
+                    case .tokensSession:
+                        return (metric.rowLabel(plan: plan), agent.usage?.session?.total)
                     }
                 }
 

@@ -40,12 +40,13 @@ codex_json='{"agent":"codex","label":"Codex","status":"ok","updated_at":"2026-08
 claude_usage="$(jq -nc '{
   today: {date:"2026-08-09", input:1, output:2, cache_write:3, cache_read:4, total:10, cost_usd:0.5},
   session: {id:"s1", input:1, output:2, cache_write:3, cache_read:4, total:10, cost_usd:0.5},
-  daily: [{date:"2026-08-09", total:10}]
+  recent_5h: {input:1, output:2, cache_write:3, cache_read:4, total:10, cost_usd:0.5},
+  daily: [{date:"2026-08-09", input:1, output:2, cache_write:3, cache_read:4, total:10, cost_usd:0.5}]
 }')"
 codex_usage="$(jq -nc '{
   today: {date:"2026-08-09", input:1, output:2, cache_write:0, cache_read:4, total:7},
   session: null,
-  daily: [{date:"2026-08-09", total:7}]
+  daily: [{date:"2026-08-09", input:1, output:2, cache_write:0, cache_read:4, total:7}]
 }')"
 
 write_state "$claude_json" "$codex_json" "$claude_usage" "$codex_usage"
@@ -70,6 +71,7 @@ mapfile -t state_keys < <(jq -r '
     (.agents[].usage | select(type == "object") | keys_unsorted[]),
     (.agents[].usage.today? | select(type == "object") | keys_unsorted[]),
     (.agents[].usage.session? | select(type == "object") | keys_unsorted[]),
+    (.agents[].usage.recent_5h? | select(type == "object") | keys_unsorted[]),
     (.agents[].usage.daily[]? | select(type == "object") | keys_unsorted[])
   ] | unique[]
 ' "$AGENT_STATUS_STATE_FILE")

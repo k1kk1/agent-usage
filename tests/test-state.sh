@@ -33,7 +33,7 @@ jq -e '
 
 # トークン集計は利用枠とは別経路なので、集計だけ落ちても枠は残り、
 # 逆に枠が落ちても集計は前回値が残る。
-usage='{"today":{"date":"2026-08-09","input":1,"output":2,"cache_write":3,"cache_read":4,"total":10,"cost_usd":0.5},"session":{"id":"s1","input":1,"output":2,"cache_write":3,"cache_read":4,"total":10,"cost_usd":0.5},"daily":[{"date":"2026-08-09","total":10}]}'
+usage='{"today":{"date":"2026-08-09","input":1,"output":2,"cache_write":3,"cache_read":4,"total":10,"cost_usd":0.5},"recent_5h":{"input":1,"output":2,"cache_write":3,"cache_read":4,"total":10,"cost_usd":0.5},"session":{"id":"s1","input":1,"output":2,"cache_write":3,"cache_read":4,"total":10,"cost_usd":0.5},"daily":[{"date":"2026-08-09","input":1,"output":2,"cache_write":3,"cache_read":4,"total":10,"cost_usd":0.5}]}'
 write_state "$success_claude" "$success_codex" "$usage" 'null'
 
 jq -e '

@@ -138,7 +138,7 @@ statusLine の仕様: https://code.claude.com/docs/ja/statusline
 
 ### トークン利用数の集計
 
-利用枠の割合は API から取れますが、トークンの実数はどちらのエージェントも API では返しません。`usage-collector.sh` がローカルのセッションログ（Claude は `~/.claude/projects`、Codex は `~/.codex/sessions`）を読み、今日ぶん・現在のセッションぶん・直近 7 日の推移を集計します。
+利用枠の割合は API から取れますが、トークンの実数はどちらのエージェントも API では返しません。`usage-collector.sh` がローカルのセッションログ（Claude は `~/.claude/projects`、Codex は `~/.codex/sessions`）を読み、今日ぶん・現在のセッションぶん・直近 31 日の日別内訳を集計します。「直近 N 日」や「更新日から N 日ごと」といった集計期間は契約側の都合で決まるため、daemon は日別までを出し、期間の合算と上限に対する色分けは macOS アプリ側で行います。
 
 ログは追記のみなので、変化したファイルだけを読み直すようキャッシュしています。
 

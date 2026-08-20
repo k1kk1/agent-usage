@@ -46,6 +46,17 @@ struct AgentUsageWidgetView: View {
 
     private var showsReset: Bool { family != .systemSmall }
 
+    /// グラフを出せるかは縦の余白で決まる。
+    /// Small は幅も高さも足りない。Medium はエージェント 1 つぶんしか入らないので、
+    /// 2 つ並ぶときは枠とトークン行を優先してグラフを省く。Large は常に入る。
+    private func showsChart(agentCount: Int) -> Bool {
+        switch family {
+        case .systemSmall: return false
+        case .systemLarge: return true
+        default: return agentCount <= 1
+        }
+    }
+
     var body: some View {
         Group {
             if let state = entry.state {
@@ -70,20 +81,18 @@ struct AgentUsageWidgetView: View {
                     .foregroundStyle(UsageFormat.isStale(state.updatedAt) ? Color.orange : Color.secondary)
             }
 
-            ForEach(visibleAgents(in: state), id: \.agent) { agent in
+            let agents = visibleAgents(in: state)
+            ForEach(agents, id: \.agent) { agent in
                 AgentSection(
                     agent: agent,
                     showsReset: showsReset,
                     windowLabels: windowLabels(for: agent),
                     metrics: entry.preferences.metrics(scope: .widget, agentID: agent.agent),
-                    // Small はスパークラインを引くだけの幅がない。
-                    showsMetricDetail: family != .systemSmall
+                    plan: entry.preferences.plan(agentID: agent.agent),
+                    showsChart: showsChart(agentCount: agents.count),
+                    // Large は縦に余裕があるので、アプリと同じ高さで出す。
+                    compactChart: family != .systemLarge
                 )
-            }
-
-            if family == .systemLarge {
-                Divider()
-                largeDetails(for: state)
             }
 
             Spacer(minLength: 0)
@@ -111,27 +120,6 @@ struct AgentUsageWidgetView: View {
         )
     }
 
-    /// Large だけに出す補足。トークンは AgentSection 側で出すので、
-    /// ここはコンテキスト残量と、statusLine 実測のセッションコストに絞る。
-    @ViewBuilder
-    private func largeDetails(for state: UsageState) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            ForEach(visibleAgents(in: state), id: \.agent) { agent in
-                if let context = agent.context?.usedPct {
-                    detail("\(agent.label) context \(UsageFormat.percent(context))")
-                }
-                if let cost = UsageFormat.cost(agent.cost?.totalUsd) {
-                    detail("\(agent.label) session \(cost)")
-                }
-            }
-        }
-    }
-
-    private func detail(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundStyle(.secondary)
-    }
 }
 
 struct AgentUsageWidget: Widget {

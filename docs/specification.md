@@ -34,13 +34,14 @@ Codex の枠は 5h/7d 固定ではありません。応答の `windowDurationMin
 | エージェント | 読むファイル | 読む場所 |
 | --- | --- | --- |
 | Claude Code | `~/.claude/projects/**/*.jsonl` | `type: "assistant"` 行の `message.usage` |
-| Codex | `~/.codex/sessions/**/*.jsonl` | `token_count` イベントの `total_token_usage` |
+| Codex | `~/.codex/sessions/**/*.jsonl` | `token_count` イベントの `last_token_usage`（1 回の API 呼び出しぶん） |
 
 集計時の注意点:
 
 - Claude は同じ API 応答が複数行に現れることがあり、resume でセッションを引き継ぐと前のやり取りが新しいファイルへ複製されます。`message.id` + `requestId` で重複を除きます。
 - Claude の `timestamp` は UTC の ISO8601 でミリ秒付きです。jq の `fromdateiso8601` は小数秒を受け付けないため、落としてから変換します。
-- Codex の `total_token_usage` はセッション累計なので、合算せずファイルごとの最後の値を採ります。
+- Codex は `token_count` イベントごとの `last_token_usage`（その 1 回ぶん）を 1 行として扱います。累計の `total_token_usage` と足し合わせが一致することは確認済みで、1 回ごとに時刻が付くため、日付をまたぐセッションでも正しい日に振り分けられます。`last_token_usage` を持たない版のログでは、従来どおり累計の最後の値を採ります。
+- Codex のログは版によって `ordinal` を持ちません。行の識別子には並び順を使います（`ordinal` を当てにすると、無い版で全行が同じキーになり重複除去に飲まれます）。
 - 日付は state.json の他の時刻表記と揃えて JST 境界で切ります。
 
 ログは追記のみで、終了したセッションのファイルは変わりません。`(size, mtime, inode)` をキーにファイル単位でキャッシュ（`usage-cache.json`）し、変化したものだけ読み直します。60 秒周期の収集でログが育っても走査量が増えません。
@@ -150,8 +151,24 @@ ${XDG_RUNTIME_DIR:-$HOME/.cache}/agent-status/state.json
           "cost_usd": 0.62
         },
         "daily": [
-          { "date": "2026-06-20", "total": 1020000 },
-          { "date": "2026-06-21", "total": 1240000 }
+          {
+            "date": "2026-06-20",
+            "input": 1020,
+            "output": 20400,
+            "cache_write": 122400,
+            "cache_read": 876180,
+            "total": 1020000,
+            "cost_usd": 3.57
+          },
+          {
+            "date": "2026-06-21",
+            "input": 1240,
+            "output": 24800,
+            "cache_write": 148800,
+            "cache_read": 1065160,
+            "total": 1240000,
+            "cost_usd": 4.31
+          }
         ]
       }
     }
@@ -161,7 +178,14 @@ ${XDG_RUNTIME_DIR:-$HOME/.cache}/agent-status/state.json
 
 `used_pct` は 0 から 100 のパーセント値です。`used_fraction` や `usage_ratio` のような比率フィールドが API 応答にある場合のみ 100 倍して正規化します。
 
-`usage` は集計できなかった場合 `null` になります。集計だけが失敗した回は直前の値を残すため、利用枠の失敗でトークン表示が消えることはありません（逆も同じです）。`usage.daily` は既定で直近 7 日分です。
+`usage` は集計できなかった場合 `null` になります。集計だけが失敗した回は直前の値を残すため、利用枠の失敗でトークン表示が消えることはありません（逆も同じです）。
+
+`usage.recent_5h` は、いまの 5h 枠に入るぶんの実測です。枠の開始時刻は state.json の
+`reset_at` から 5 時間引いて求めます（前回周期の値を読むことになりますが、5h 枠のリセット時刻は
+5 時間に一度しか変わらないため問題になりません）。macOS アプリはこれと枠の使用率から
+「5h 枠 1 本ぶんのトークン量」を見積もり、日別グラフの基準線に使います。Codex は 5h 枠を返さないため `null` で、アプリ側は 7d 枠と直近 7 日の合計から日割りで見積もります。
+
+`usage.daily` は既定で直近 31 日分で、`today` と同じ内訳を日ごとに持ちます。「直近 N 日」や「更新日から N 日ごと」といった集計期間は契約側の都合で決まり、表示先ごとに変わることもあるため、daemon は日別までを出し、期間の合算は表示側（macOS アプリの `TokenPeriod`）が行います。日数は `AGENT_USAGE_DAILY_DAYS` で変えられます。
 
 ### キー名の整合
 

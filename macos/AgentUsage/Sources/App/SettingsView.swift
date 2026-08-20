@@ -9,12 +9,39 @@ struct SettingsView: View {
 
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var launchAtLoginError: String?
+    /// 入力途中の文字列。数値や日付は打ち終わるまで解釈できないので、
+    /// 画面側の下書きを持ち、解釈できたものだけ設定へ書き戻す。
+    @State private var drafts: [String: PlanDraft] = [:]
+
+    private struct PlanDraft: Equatable {
+        var period: String
+        var anchor: String
+        var limit: String
+
+        init(plan: DisplayPreferences.TokenPlan) {
+            period = "\(plan.periodDays)"
+            anchor = plan.anchorDate ?? ""
+            limit = UsageFormat.tokensInput(plan.limit)
+        }
+    }
 
     var body: some View {
+        ScrollView {
+            content
+        }
+        // 表示先が 3 つ・エージェントが 2 つ並ぶと縦に伸びるので、画面からはみ出さない高さで止める。
+        .frame(width: 320, height: 560)
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 16) {
             ForEach(DisplayPreferences.Scope.allCases, id: \.self) { scope in
                 scopeSection(scope)
             }
+
+            Divider()
+
+            tokenPlanSection
 
             Divider()
 
@@ -41,7 +68,112 @@ struct SettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(16)
-        .frame(width: 300, alignment: .leading)
+        .frame(width: 320, alignment: .leading)
+    }
+
+    /// トークンの集計期間と上限。表示先ではなく契約側の都合なので、表示先の選択とは分けて置く。
+    private var tokenPlanSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("トークンの集計")
+                .font(.system(size: 12, weight: .semibold))
+
+            ForEach(agents, id: \.agent) { agent in
+                let plan = display.plan(agentID: agent.agent)
+                let draft = binding(for: agent.agent)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Label {
+                        Text(agent.label)
+                            .font(.system(size: 11, weight: .medium))
+                    } icon: {
+                        AgentIconView(agentID: agent.agent, size: 11)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    field("集計期間", text: draft.period, width: 52, suffix: "日", placeholder: "1")
+                    field(
+                        "更新日",
+                        text: draft.anchor,
+                        width: 96,
+                        suffix: nil,
+                        placeholder: "yyyy-MM-dd"
+                    )
+                    field("上限", text: draft.limit, width: 72, suffix: "トークン", placeholder: "上限なし")
+
+                    Text(planSummary(plan))
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                        .padding(.leading, 18)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func field(
+        _ title: String,
+        text: Binding<String>,
+        width: CGFloat,
+        suffix: String?,
+        placeholder: String
+    ) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(.system(size: 11))
+                .frame(width: 56, alignment: .leading)
+            TextField(placeholder, text: text)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11, design: .monospaced))
+                .frame(width: width)
+            if let suffix {
+                Text(suffix)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 18)
+    }
+
+    /// いま合算している期間と、上限があれば残り日数を添える。
+    private func planSummary(_ plan: DisplayPreferences.TokenPlan) -> String {
+        let range = TokenPeriod.range(plan: plan)
+        let period = plan.periodDays <= 1
+            ? "当日（\(TokenPeriod.text(range.start))）を集計"
+            : "\(TokenPeriod.text(range.start)) 〜 \(TokenPeriod.text(range.end)) を集計"
+        let reset = plan.anchorDate == nil
+            ? "毎日更新"
+            : "残り \(TokenPeriod.remainingDays(plan: plan)) 日"
+        return "\(period)・\(reset)"
+    }
+
+    private func binding(for agentID: String) -> (period: Binding<String>, anchor: Binding<String>, limit: Binding<String>) {
+        func draft() -> PlanDraft {
+            drafts[agentID] ?? PlanDraft(plan: display.plan(agentID: agentID))
+        }
+        func update(_ transform: @escaping (inout PlanDraft) -> Void) {
+            var next = draft()
+            transform(&next)
+            drafts[agentID] = next
+            commit(next, agentID: agentID)
+        }
+        return (
+            Binding(get: { draft().period }, set: { value in update { $0.period = value } }),
+            Binding(get: { draft().anchor }, set: { value in update { $0.anchor = value } }),
+            Binding(get: { draft().limit }, set: { value in update { $0.limit = value } })
+        )
+    }
+
+    /// 解釈できた項目だけ保存する。入力途中の空欄や不正な日付で設定を壊さない。
+    private func commit(_ draft: PlanDraft, agentID: String) {
+        var plan = display.plan(agentID: agentID)
+        if let days = Int(draft.period.trimmingCharacters(in: .whitespaces)), days >= 1 {
+            plan.periodDays = days
+        }
+        let anchor = draft.anchor.trimmingCharacters(in: .whitespaces)
+        plan.anchorDate = anchor.isEmpty ? nil : (TokenPeriod.day(anchor) != nil ? anchor : nil)
+        plan.limit = UsageFormat.parseTokens(draft.limit)
+        display.setPlan(plan, agentID: agentID)
     }
 
     private func scopeSection(_ scope: DisplayPreferences.Scope) -> some View {

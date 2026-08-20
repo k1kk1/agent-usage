@@ -60,6 +60,16 @@ final class DisplayPreferencesStore: ObservableObject {
         save()
     }
 
+    func plan(agentID: String) -> DisplayPreferences.TokenPlan {
+        preferences.plan(agentID: agentID)
+    }
+
+    func setPlan(_ plan: DisplayPreferences.TokenPlan, agentID: String) {
+        guard preferences.plan(agentID: agentID) != plan else { return }
+        preferences.setPlan(plan, agentID: agentID)
+        save()
+    }
+
     private func save() {
         if let data = try? JSONEncoder().encode(preferences) {
             UserDefaults.standard.set(data, forKey: Self.key)

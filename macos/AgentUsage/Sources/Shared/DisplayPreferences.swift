@@ -21,22 +21,57 @@ struct DisplayPreferences: Codable, Equatable {
     /// 利用枠とは別軸の表示項目。枠は「5h」「7d」のようにエージェントが返す単位だが、
     /// トークンは枠ではないため、枠の選択に混ぜず独立した選択肢として持つ。
     enum Metric: String, CaseIterable, Codable {
-        case tokensToday
+        /// 集計期間（既定は当日）のトークン。raw 値は保存済み設定と互換を保つため据え置く。
+        case tokensPeriod = "tokensToday"
         case tokensSession
 
         var title: String {
             switch self {
-            case .tokensToday: return "今日のトークン"
+            case .tokensPeriod: return "期間内のトークン"
             case .tokensSession: return "セッションのトークン"
             }
         }
 
-        /// 行の左端に出す短いラベル。
-        var rowLabel: String {
+        /// 行の左端に出す短いラベル。期間が 1 日なら "today"、N 日なら "Nd"。
+        func rowLabel(plan: TokenPlan) -> String {
             switch self {
-            case .tokensToday: return "today"
+            case .tokensPeriod: return plan.periodDays <= 1 ? "today" : "\(plan.periodDays)d"
             case .tokensSession: return "session"
             }
+        }
+    }
+
+    /// トークンの集計期間と上限。エージェントごとに持つ。
+    /// 利用枠（5h/7d）と違い API からは取れないので、利用側の契約に合わせて手で設定する。
+    struct TokenPlan: Codable, Equatable {
+        /// 集計する日数。1 なら当日のみ。
+        var periodDays: Int
+        /// 集計期間の起点となる日（yyyy-MM-dd, JST）。
+        /// Codex の PAT のように「N 日ごとに決まった日で更新される」枠に合わせるためのもの。
+        /// nil なら常に今日を末日とする直近 N 日。
+        var anchorDate: String?
+        /// トークン上限。nil または 0 以下なら上限なしとして色分けしない。
+        var limit: Int?
+
+        static let standard = TokenPlan(periodDays: 1, anchorDate: nil, limit: nil)
+
+        init(periodDays: Int = 1, anchorDate: String? = nil, limit: Int? = nil) {
+            self.periodDays = max(1, periodDays)
+            self.anchorDate = anchorDate
+            self.limit = limit
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            periodDays = max(1, try container.decodeIfPresent(Int.self, forKey: .periodDays) ?? 1)
+            anchorDate = try container.decodeIfPresent(String.self, forKey: .anchorDate)
+            limit = try container.decodeIfPresent(Int.self, forKey: .limit)
+        }
+
+        /// 上限として意味のある値だけを返す。
+        var effectiveLimit: Int? {
+            guard let limit, limit > 0 else { return nil }
+            return limit
         }
     }
 
@@ -50,18 +85,21 @@ struct DisplayPreferences: Codable, Equatable {
     var menuBarMetrics: [String: [Metric]]
     var widgetMetrics: [String: [Metric]]
 
+    /// `エージェントID: 集計期間と上限`。表示先によらず共通。
+    var tokenPlans: [String: TokenPlan]
+
     /// エージェントが返す枠に関わらず、選択肢として常に並べる枠。
     static let commonWindows = ["5h", "7d"]
 
     private static let allWindows = ["claude": commonWindows, "codex": commonWindows]
 
     private static let defaultAppMetrics: [String: [Metric]] = [
-        "claude": [.tokensToday, .tokensSession],
-        "codex": [.tokensToday]
+        "claude": [.tokensPeriod, .tokensSession],
+        "codex": [.tokensPeriod]
     ]
     private static let defaultWidgetMetrics: [String: [Metric]] = [
-        "claude": [.tokensToday],
-        "codex": [.tokensToday]
+        "claude": [.tokensPeriod],
+        "codex": [.tokensPeriod]
     ]
     /// メニューバーは横幅が貴重なので、既定ではトークンを出さない。
     private static let defaultMenuBarMetrics: [String: [Metric]] = [:]
@@ -72,7 +110,8 @@ struct DisplayPreferences: Codable, Equatable {
         widget: allWindows,
         appMetrics: defaultAppMetrics,
         menuBarMetrics: defaultMenuBarMetrics,
-        widgetMetrics: defaultWidgetMetrics
+        widgetMetrics: defaultWidgetMetrics,
+        tokenPlans: [:]
     )
 
     /// 保存済みの JSON に新しい表示先のキーが無くても、既存の設定を捨てずに読む。
@@ -90,6 +129,7 @@ struct DisplayPreferences: Codable, Equatable {
             ?? DisplayPreferences.defaultMenuBarMetrics
         widgetMetrics = try container.decodeIfPresent([String: [Metric]].self, forKey: .widgetMetrics)
             ?? DisplayPreferences.defaultWidgetMetrics
+        tokenPlans = try container.decodeIfPresent([String: TokenPlan].self, forKey: .tokenPlans) ?? [:]
     }
 
     init(
@@ -98,7 +138,8 @@ struct DisplayPreferences: Codable, Equatable {
         widget: [String: [String]],
         appMetrics: [String: [Metric]] = [:],
         menuBarMetrics: [String: [Metric]] = [:],
-        widgetMetrics: [String: [Metric]] = [:]
+        widgetMetrics: [String: [Metric]] = [:],
+        tokenPlans: [String: TokenPlan] = [:]
     ) {
         self.app = app
         self.menuBar = menuBar
@@ -106,6 +147,16 @@ struct DisplayPreferences: Codable, Equatable {
         self.appMetrics = appMetrics
         self.menuBarMetrics = menuBarMetrics
         self.widgetMetrics = widgetMetrics
+        self.tokenPlans = tokenPlans
+    }
+
+    /// 未設定のエージェントは既定（当日集計・上限なし）。
+    func plan(agentID: String) -> TokenPlan {
+        tokenPlans[agentID] ?? .standard
+    }
+
+    mutating func setPlan(_ plan: TokenPlan, agentID: String) {
+        tokenPlans[agentID] = plan
     }
 
     subscript(scope: Scope) -> [String: [String]] {
