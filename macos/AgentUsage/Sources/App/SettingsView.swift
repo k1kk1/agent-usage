@@ -51,7 +51,7 @@ struct SettingsView: View {
                         setLaunchAtLogin(enabled)
                     }
 
-                Toggle("80%・95%で通知", isOn: $alerts.enabled)
+                Toggle("残量20%・5%で通知", isOn: $alerts.enabled)
 
                 if let launchAtLoginError {
                     Text(launchAtLoginError)

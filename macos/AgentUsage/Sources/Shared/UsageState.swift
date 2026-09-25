@@ -44,6 +44,23 @@ struct UsageState: Decodable {
             case lastSuccessWindows = "last_success_windows"
         }
 
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            // 取得エラー時の daemon 出力は label を省略する。1 エージェントの一時的な
+            // エラーで state.json 全体を読めなくしないよう、識別子を表示名に使う。
+            agent = try container.decodeIfPresent(String.self, forKey: .agent) ?? "unknown"
+            label = try container.decodeIfPresent(String.self, forKey: .label) ?? agent
+            status = try container.decodeIfPresent(String.self, forKey: .status) ?? "error"
+            message = try container.decodeIfPresent(String.self, forKey: .message)
+            updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+            windows = try container.decodeIfPresent([String: Window].self, forKey: .windows) ?? [:]
+            lastSuccessAt = try container.decodeIfPresent(String.self, forKey: .lastSuccessAt)
+            lastSuccessWindows = try container.decodeIfPresent([String: Window].self, forKey: .lastSuccessWindows)
+            context = try container.decodeIfPresent(Context.self, forKey: .context)
+            cost = try container.decodeIfPresent(Cost.self, forKey: .cost)
+            usage = try container.decodeIfPresent(TokenUsage.self, forKey: .usage)
+        }
+
         var isOK: Bool { status == "ok" }
 
         /// primary / secondary を優先し、それ以外の枠も安定した順で並べる。

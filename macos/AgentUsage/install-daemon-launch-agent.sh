@@ -28,9 +28,8 @@ cat >"$PLIST_PATH" <<EOF
   <string>$LABEL</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/zsh</string>
-    <string>-lc</string>
-    <string>exec '$ROOT_DIR/agent-status-daemon.sh'</string>
+    <string>/bin/bash</string>
+    <string>$ROOT_DIR/agent-status-daemon.sh</string>
   </array>
   <key>WorkingDirectory</key>
   <string>$ROOT_DIR</string>

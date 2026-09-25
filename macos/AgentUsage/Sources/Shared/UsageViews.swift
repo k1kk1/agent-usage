@@ -10,6 +10,14 @@ enum UsagePalette {
         return .green
     }
 
+    /// 残量向け。少ないほど警告色にする。
+    static func remainingColor(for pct: Double?) -> Color {
+        guard let pct else { return .secondary }
+        if pct <= 20 { return .red }
+        if pct <= 50 { return .orange }
+        return .green
+    }
+
     /// 日別グラフの「1 日の目安」向け。目安は超えても止まらない目標値なので、
     /// 枠より緩く、超過してから色を変える。
     static func allowanceColor(for pct: Double?) -> Color {
@@ -80,6 +88,15 @@ enum UsageFormat {
         return String(format: "%.0f%%", pct)
     }
 
+    /// state.json の使用率を、表示用の残量へ変換する。
+    static func remainingPct(from usedPct: Double?) -> Double? {
+        usedPct.map { min(max(100 - $0, 0), 100) }
+    }
+
+    static func remainingPercent(from usedPct: Double?) -> String {
+        percent(remainingPct(from: usedPct))
+    }
+
     /// トークン数は桁が大きく毎回変わるので、幅が動かないよう 4 文字前後に丸める。
     /// 1234567 → "1.2M"、12345 → "12k"。
     static func tokens(_ count: Int?) -> String {
@@ -143,6 +160,7 @@ enum UsageFormat {
 /// 使用率バー 1 本。
 struct UsageBar: View {
     let pct: Double?
+    var color: Color? = nil
     var height: CGFloat = 6
 
     var body: some View {
@@ -152,7 +170,7 @@ struct UsageBar: View {
                 Capsule()
                     .fill(Color.primary.opacity(0.12))
                 Capsule()
-                    .fill(UsagePalette.color(for: pct))
+                    .fill(color ?? UsagePalette.color(for: pct))
                     .frame(width: geo.size.width * ratio)
             }
         }
@@ -160,23 +178,24 @@ struct UsageBar: View {
     }
 }
 
-/// "5h [====----] 47% 07/31 17:20" 相当の 1 行。
+/// "5h [====----] 53% 07/31 17:20" 相当の残量 1 行。
 struct UsageWindowRow: View {
     let window: UsageState.Window
     var showsReset: Bool = true
 
     var body: some View {
+        let remainingPct = UsageFormat.remainingPct(from: window.usedPct)
         HStack(spacing: 6) {
             Text(window.label)
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .frame(width: 20, alignment: .leading)
 
-            UsageBar(pct: window.usedPct)
+            UsageBar(pct: remainingPct, color: UsagePalette.remainingColor(for: remainingPct))
 
-            Text(UsageFormat.percent(window.usedPct))
+            Text(UsageFormat.remainingPercent(from: window.usedPct))
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundStyle(UsagePalette.color(for: window.usedPct))
+                .foregroundStyle(UsagePalette.remainingColor(for: remainingPct))
                 .frame(width: 34, alignment: .trailing)
 
             if showsReset {
@@ -241,7 +260,7 @@ struct TokenRow: View {
     }
 }
 
-/// エージェント 1 つ分のブロック。取得失敗時はバーの代わりにステータスを赤字で出す。
+/// エージェント 1 つ分のブロック。前回の成功値があれば、それを静かに表示し続ける。
 struct AgentSection: View {
     let agent: UsageState.Agent
     var showsReset: Bool = true
@@ -284,17 +303,10 @@ struct AgentSection: View {
                     UsageWindowRow(window: window, showsReset: showsReset)
                 }
             } else if agent.hasStaleUsage {
-                Text("取得失敗・前回の成功値")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
                 ForEach(visible(agent.orderedLastSuccessWindows), id: \.label) { window in
                     UsageWindowRow(window: window, showsReset: showsReset)
                         .opacity(0.5)
                 }
-                Text(agent.statusText)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.red)
-                    .lineLimit(2)
             } else {
                 Text(agent.statusText)
                     .font(.system(size: 10))

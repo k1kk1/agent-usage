@@ -183,21 +183,21 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
         let agentID: String
         let label: String
         /// 右クリックメニューで選ばれている枠だけを、その順で持つ。
-        let windows: [(label: String, usedPct: Double?)]
+        let windows: [(label: String, remainingPct: Double?)]
         /// 設定で選ばれているトークン項目。既定では空。
         let tokens: [(label: String, total: Int?)]
 
         var isEmpty: Bool { windows.isEmpty && tokens.isEmpty }
 
         var percentText: String {
-            (windows.map { $0.usedPct.map(UsageFormat.percent) ?? "--%" }
+            (windows.map { UsageFormat.percent($0.remainingPct) }
                 + tokens.map { UsageFormat.tokens($0.total) })
                 .joined(separator: " / ")
         }
 
         var detailText: String {
             let detail = (windows
-                .map { "\($0.label) \($0.usedPct.map(UsageFormat.percent) ?? "--%")" }
+                .map { "\($0.label) \(UsageFormat.percent($0.remainingPct))" }
                 + tokens.map { "\($0.label) \(UsageFormat.tokens($0.total))" })
                 .joined(separator: " ")
             return "\(label) \(detail)"
@@ -217,9 +217,9 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
             let available = menuWindowLabels(for: agent)
             let selected = display.windows(scope: .menuBar, agentID: agent.agent, available: available)
 
-            let windows = selected.map { label -> (label: String, usedPct: Double?) in
+            let windows = selected.map { label -> (label: String, remainingPct: Double?) in
                 let window = agent.orderedWindows.first { $0.label == label }
-                return (label, agent.isOK ? window?.usedPct : nil)
+                return (label, agent.isOK ? UsageFormat.remainingPct(from: window?.usedPct) : nil)
             }
 
             // トークンはローカルのログ由来なので、利用枠の取得が失敗していても出す。

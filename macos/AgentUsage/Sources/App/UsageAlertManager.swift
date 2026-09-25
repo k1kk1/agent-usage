@@ -62,7 +62,7 @@ final class UsageAlertManager: ObservableObject {
     private func sendNotification(agent: String, window: String, usedPct: Double, level: Int) {
         let content = UNMutableNotificationContent()
         content.title = "\(agent) \(window) が \(level)% に到達"
-        content.body = "現在の使用率: \(UsageFormat.percent(usedPct))"
+        content.body = "現在の残量: \(UsageFormat.remainingPercent(from: usedPct))"
         content.sound = .default
 
         let request = UNNotificationRequest(

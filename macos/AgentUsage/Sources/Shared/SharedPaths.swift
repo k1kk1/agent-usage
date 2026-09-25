@@ -9,7 +9,7 @@ import Foundation
 ///
 ///   ホストアプリ（非サンドボックス）が daemon の state.json を
 ///   ~/Library/Containers/<widget-id>/Data/Library/Application Support/AgentUsage/state.json
-///   へミラーし、ウィジェットは自分の $HOME 相対でそれを読む。
+///   へミラーし、ウィジェットもその絶対パスから読む。
 enum SharedPaths {
     static let widgetBundleID = "dev.kikki.AgentUsage.Widget"
     static let mirrorFileName = "state.json"
@@ -18,7 +18,8 @@ enum SharedPaths {
 
     private static let containerRelativePath = "Library/Application Support/AgentUsage"
 
-    /// ウィジェット側。サンドボックス下では NSHomeDirectory() が自身のコンテナ Data を指す。
+    /// ウィジェット側。`HOME` と Application Support の検索結果は通常のユーザー領域を
+    /// 指すため、拡張自身が読み書きできるコンテナを明示する。
     static var widgetMirrorURL: URL { widgetURL(for: mirrorFileName) }
     static var widgetPreferencesURL: URL { widgetURL(for: preferencesFileName) }
 
@@ -27,9 +28,7 @@ enum SharedPaths {
     static var hostPreferencesURL: URL { hostURL(for: preferencesFileName) }
 
     private static func widgetURL(for fileName: String) -> URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(containerRelativePath)
-            .appendingPathComponent(fileName)
+        hostURL(for: fileName)
     }
 
     private static func hostURL(for fileName: String) -> URL {

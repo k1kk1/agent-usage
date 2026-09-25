@@ -18,7 +18,7 @@ CODEX_APP_SERVER_COMMAND="${CODEX_APP_SERVER_COMMAND:-codex app-server}"
 # JSON-RPC応答を待つための保持時間を設定する。
 CODEX_APP_SERVER_WAIT_SECONDS="${CODEX_APP_SERVER_WAIT_SECONDS:-10}"
 CODEX_RATE_LIMIT_METHOD="${CODEX_RATE_LIMIT_METHOD:-account/rateLimits/read}"
-LOCK_OWNER_BASHPID=""
+LOCK_OWNER_SUBSHELL=""
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
@@ -408,11 +408,13 @@ main() {
   cleanup_lock() {
     # collect_once内のバックグラウンド子プロセスにもEXIT trapが継承される。
     # ロックを取得した親だけが消せるようにする。
-    [[ "$BASHPID" == "$LOCK_OWNER_BASHPID" ]] || return
+    [[ "${BASH_SUBSHELL:-0}" == "$LOCK_OWNER_SUBSHELL" ]] || return
     rm -f "$LOCK_DIR/pid"
     rmdir "$LOCK_DIR" 2>/dev/null || true
   }
-  LOCK_OWNER_BASHPID="$BASHPID"
+  # macOS 標準の Bash 3.2 には BASHPID がない。BASH_SUBSHELL なら利用でき、
+  # collect_once 内のバックグラウンド子プロセスが親のロックを消すのを防げる。
+  LOCK_OWNER_SUBSHELL="${BASH_SUBSHELL:-0}"
   trap cleanup_lock EXIT
   trap 'exit 0' INT TERM
 
