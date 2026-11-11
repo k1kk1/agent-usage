@@ -9,6 +9,34 @@ mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR" 2>/dev/null || true
 
 input_json="$(cat)"
+
+# 複数セッションが同じファイルへ書くため、API 応答前や放置中のセッションは
+# rate_limits を持たない JSON で上書きしてしまう。前回の値がまだ有効な
+# （リセット前の）ウィンドウは引き継ぎ、同じウィンドウ内では使用率が下がらないようにする。
+merge_rate_limits() {
+  [[ -s "$CLAUDE_STATUS_FILE" ]] || return 1
+  jq -c --slurpfile prev "$CLAUDE_STATUS_FILE" --argjson now "$(date +%s)" '
+    def pick(name):
+      ($prev[0].rate_limits[name] // null) as $p
+      | (.rate_limits[name] // null) as $c
+      | if $p == null or (($p.resets_at // 0) <= $now) then $c
+        elif $c == null then $p
+        elif ($c.resets_at // 0) < $p.resets_at then $p
+        elif ($c.resets_at == $p.resets_at)
+             and (($p.used_percentage // 0) > ($c.used_percentage // 0)) then $p
+        else $c end;
+    pick("five_hour") as $f
+    | pick("seven_day") as $s
+    | (if $f == null then {} else {five_hour: $f} end)
+      + (if $s == null then {} else {seven_day: $s} end) as $rl
+    | if $rl == {} then . else .rate_limits = (.rate_limits // {}) + $rl end
+  ' <<<"$input_json" 2>/dev/null
+}
+
+if command -v jq >/dev/null 2>&1; then
+  merged_json="$(merge_rate_limits)" && [[ -n "$merged_json" ]] && input_json="$merged_json"
+fi
+
 tmp_file="$(mktemp "$STATE_DIR/claude-status.XXXXXX")" || exit 0
 cleanup_tmp_file() {
   [[ -n "${tmp_file:-}" ]] && rm -f "$tmp_file"
