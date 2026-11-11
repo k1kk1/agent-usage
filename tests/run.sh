@@ -6,5 +6,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 bash "$SCRIPT_DIR/test-state.sh"
 bash "$SCRIPT_DIR/test-schema-keys.sh"
 bash "$SCRIPT_DIR/test-pane.sh"
+bash "$SCRIPT_DIR/test-status-line.sh"
 
 printf 'All agent-usage shell tests passed.\n'

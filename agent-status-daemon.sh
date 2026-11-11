@@ -12,6 +12,9 @@ CLAUDE_STATUS_FILE="${CLAUDE_STATUS_FILE:-$STATE_DIR/claude-status.json}"
 
 USAGE_COLLECTOR="${AGENT_USAGE_COLLECTOR:-$SCRIPT_DIR/usage-collector.sh}"
 COLLECT_USAGE="${AGENT_USAGE_COLLECT:-1}"
+# トークン集計はログ量しだいで数分かかるため、利用枠の取得とは別ループで回す。
+USAGE_INTERVAL_SECONDS="${AGENT_USAGE_INTERVAL_SECONDS:-60}"
+USAGE_RESULT_DIR="${AGENT_USAGE_RESULT_DIR:-$STATE_DIR}"
 
 CODEX_APP_SERVER_COMMAND="${CODEX_APP_SERVER_COMMAND:-codex app-server}"
 # Codex app-server はstdinを即時に閉じると応答前に終了するため、
@@ -19,6 +22,7 @@ CODEX_APP_SERVER_COMMAND="${CODEX_APP_SERVER_COMMAND:-codex app-server}"
 CODEX_APP_SERVER_WAIT_SECONDS="${CODEX_APP_SERVER_WAIT_SECONDS:-10}"
 CODEX_RATE_LIMIT_METHOD="${CODEX_RATE_LIMIT_METHOD:-account/rateLimits/read}"
 LOCK_OWNER_SUBSHELL=""
+TOKEN_LOOP_PID=""
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
@@ -325,35 +329,117 @@ write_state() {
   fi
 }
 
-collect_once() {
-  local tmp_dir claude_file codex_file claude_usage_file codex_usage_file
-  local claude codex claude_usage codex_usage
+usage_result_file() {
+  printf '%s/%s-usage.json' "$USAGE_RESULT_DIR" "$1"
+}
+
+# 集計結果を agent ごとのファイルへ保存する。失敗時は前回のファイルを残す。
+collect_tokens_once() {
+  local agent pids=()
+
+  [[ "$COLLECT_USAGE" == "1" ]] || return 0
+  mkdir -p "$USAGE_RESULT_DIR" || return 1
+
+  for agent in claude codex; do
+    (
+      local tmp_file="" result_file
+      trap 'rm -f "$tmp_file"' EXIT
+      trap 'exit 0' INT TERM
+      result_file="$(usage_result_file "$agent")"
+      tmp_file="$(mktemp "$USAGE_RESULT_DIR/$agent-usage.XXXXXX")" || exit 1
+      fetch_token_usage "$agent" >"$tmp_file"
+      if [[ "$(cat "$tmp_file")" != "null" ]] && jq -e . >/dev/null 2>&1 <"$tmp_file"; then
+        chmod 600 "$tmp_file" 2>/dev/null || true
+        mv "$tmp_file" "$result_file" && tmp_file=""
+      fi
+    ) &
+    pids+=("$!")
+  done
+  wait "${pids[@]}"
+}
+
+read_usage_result() {
+  local file out
+  file="$(usage_result_file "$1")"
+  out="$(cat "$file" 2>/dev/null)"
+  if [[ -n "$out" ]] && jq -e . >/dev/null 2>&1 <<<"$out"; then
+    printf '%s' "$out"
+  else
+    printf 'null'
+  fi
+}
+
+# 利用枠だけを取得し、保存済みのトークン集計と合わせて state.json を書く。
+# state.json を書くのはこの関数だけにして、書き込みの競合を避ける。
+collect_limits_once() {
+  local tmp_dir claude_file codex_file claude codex
 
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/agent-status.XXXXXX")" || return 1
   claude_file="$tmp_dir/claude.json"
   codex_file="$tmp_dir/codex.json"
 
-  claude_usage_file="$tmp_dir/claude-usage.json"
-  codex_usage_file="$tmp_dir/codex-usage.json"
-
+  # 引数なしの wait は裏で動く集計ループまで待ってしまうため、PID を指定する。
+  local claude_pid codex_pid
   fetch_claude_usage >"$claude_file" &
+  claude_pid=$!
   fetch_codex_usage >"$codex_file" &
-  fetch_token_usage claude >"$claude_usage_file" &
-  fetch_token_usage codex >"$codex_usage_file" &
-  wait
+  codex_pid=$!
+  wait "$claude_pid" "$codex_pid"
 
   claude="$(cat "$claude_file" 2>/dev/null || json_error "claude" "error" "No Claude state")"
   codex="$(cat "$codex_file" 2>/dev/null || json_error "codex" "error" "No Codex state")"
-  claude_usage="$(cat "$claude_usage_file" 2>/dev/null)"
-  codex_usage="$(cat "$codex_usage_file" 2>/dev/null)"
-  [[ -n "$claude_usage" ]] || claude_usage=null
-  [[ -n "$codex_usage" ]] || codex_usage=null
-
-  if ! write_state "$claude" "$codex" "$claude_usage" "$codex_usage"; then
-    rm -rf "$tmp_dir"
-    return 1
-  fi
   rm -rf "$tmp_dir"
+
+  write_state "$claude" "$codex" "$(read_usage_result claude)" "$(read_usage_result codex)"
+}
+
+collect_once() {
+  collect_tokens_once
+  collect_limits_once
+}
+
+# 割り込み可能な sleep。TERM を受けたらすぐ trap が動く。
+interruptible_sleep() {
+  sleep "$1" &
+  wait $! 2>/dev/null
+}
+
+token_loop() {
+  local parent_pid="$1" started_at elapsed remaining
+
+  if ! [[ "$USAGE_INTERVAL_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    USAGE_INTERVAL_SECONDS=60
+  fi
+
+  # 親が KILL された場合に取り残されないよう、毎回親の生存を確認する。
+  while kill -0 "$parent_pid" 2>/dev/null; do
+    started_at="$SECONDS"
+    collect_tokens_once
+    elapsed=$((SECONDS - started_at))
+    remaining=$((USAGE_INTERVAL_SECONDS - elapsed))
+    ((remaining > 0)) && interruptible_sleep "$remaining"
+  done
+}
+
+start_token_loop() {
+  [[ "$COLLECT_USAGE" == "1" ]] || return 0
+  # 集計ループとその子プロセス（collector, jq, find）を独立したプロセスグループに置き、
+  # 終了時にグループごと止める。
+  set -m
+  (
+    set +m
+    trap - EXIT
+    trap 'exit 0' INT TERM
+    token_loop "$1"
+  ) &
+  TOKEN_LOOP_PID=$!
+  set +m
+}
+
+stop_token_loop() {
+  [[ -n "$TOKEN_LOOP_PID" ]] || return 0
+  kill -TERM -- "-$TOKEN_LOOP_PID" 2>/dev/null || kill -TERM "$TOKEN_LOOP_PID" 2>/dev/null || true
+  TOKEN_LOOP_PID=""
 }
 
 main() {
@@ -409,6 +495,7 @@ main() {
     # collect_once内のバックグラウンド子プロセスにもEXIT trapが継承される。
     # ロックを取得した親だけが消せるようにする。
     [[ "${BASH_SUBSHELL:-0}" == "$LOCK_OWNER_SUBSHELL" ]] || return
+    stop_token_loop
     rm -f "$LOCK_DIR/pid"
     rmdir "$LOCK_DIR" 2>/dev/null || true
   }
@@ -423,13 +510,15 @@ main() {
     exit 0
   fi
 
+  start_token_loop "$$"
+
   while :; do
     started_at="$SECONDS"
-    collect_once
+    collect_limits_once
     elapsed=$((SECONDS - started_at))
     remaining=$((INTERVAL_SECONDS - elapsed))
     if ((remaining > 0)); then
-      sleep "$remaining"
+      interruptible_sleep "$remaining"
     fi
   done
 }
