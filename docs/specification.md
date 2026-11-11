@@ -15,11 +15,16 @@ Viewer は tmux/cmux ペイン版（`agent-status-pane.sh`）と macOS アプリ
 
 ## Daemon
 
-`agent-status-daemon.sh` は既定で 60 秒ごとに以下を並列取得します。
+`agent-status-daemon.sh` は 2 つのループで動きます。
 
-- Claude Code: 5 時間枠、7 日枠、コンテキスト残量、コスト
-- Codex: primary、secondary
-- 両エージェントのトークン利用数（`usage-collector.sh`）
+- 利用枠ループ（メイン、既定 60 秒ごと）: 以下を並列取得し、state.json を書きます。
+  - Claude Code: 5 時間枠、7 日枠、コンテキスト残量、コスト
+  - Codex: primary、secondary
+- トークン集計ループ（別プロセス、既定 60 秒ごと）: 両エージェントのトークン利用数を `usage-collector.sh` で集計し、`claude-usage.json` / `codex-usage.json` に保存します。
+
+トークン集計はログ量しだいで数分かかることがあります（Raspberry Pi で数日ぶんの差分を読み直す場合など）。同じループにすると集計が終わるまで利用枠も更新されないため、分けています。state.json を書くのは利用枠ループだけで、保存済みの集計結果をその都度読み込みます。そのため集計結果が表示に出るまで、最大で利用枠ループ 1 周ぶん遅れます。
+
+集計ループは独立したプロセスグループで動き、daemon の終了時に子プロセスごと止めます。daemon が `KILL` で落ちた場合も、集計ループは毎周期で親の生存を確認して自分で終了します。
 
 Codex の枠は 5h/7d 固定ではありません。応答の `windowDurationMins` からラベルを算出し、`60` 分未満なら `30m`、`1440` 分未満なら `5h`、それ以上なら `7d` のような形にします。応答に無い枠（`secondary` が `null` など）は `windows` に載せません。
 

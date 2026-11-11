@@ -70,7 +70,7 @@ AGENT_STATUS_BAR_WIDTH=12 ./agent-status-pane.sh
 | --- | --- | --- |
 | `AGENT_STATUS_STATE_DIR` | `${XDG_RUNTIME_DIR:-$HOME/.cache}/agent-status` | 状態ファイル、ロック、ログを置くディレクトリ |
 | `AGENT_STATUS_STATE_FILE` | `$AGENT_STATUS_STATE_DIR/state.json` | Daemon と Viewer が共有する状態 JSON |
-| `AGENT_STATUS_INTERVAL_SECONDS` | `60` | Daemon の取得間隔 |
+| `AGENT_STATUS_INTERVAL_SECONDS` | `60` | 利用枠の取得間隔 |
 | `AGENT_STATUS_PANE_REFRESH_SECONDS` | `3` | Viewer の再描画間隔 |
 | `AGENT_STATUS_BAR_WIDTH` | 端末幅から自動 | プログレスバー幅。数値でない値と、行が折り返す値は無視します |
 | `AGENT_STATUS_SHOW_TOKENS` | `1` | `0` でペインのトークン行を消します |
@@ -82,6 +82,8 @@ AGENT_STATUS_BAR_WIDTH=12 ./agent-status-pane.sh
 | 変数 | 既定値 | 説明 |
 | --- | --- | --- |
 | `AGENT_USAGE_COLLECT` | `1` | `0` で集計を止めます。利用枠の表示だけ残ります |
+| `AGENT_USAGE_INTERVAL_SECONDS` | `60` | トークン集計の間隔。集計がこれより長くかかった場合は続けて次を始めます |
+| `AGENT_USAGE_RESULT_DIR` | `$AGENT_STATUS_STATE_DIR` | 集計結果（`claude-usage.json` / `codex-usage.json`）の保存先 |
 | `AGENT_USAGE_COLLECTOR` | `<repo>/usage-collector.sh` | 集計スクリプトのパス |
 | `AGENT_USAGE_PRICING_FILE` | `<repo>/pricing.json` | モデル単価表 |
 | `AGENT_USAGE_CACHE_FILE` | `$AGENT_STATUS_STATE_DIR/usage-cache.json` | ファイル単位の集計キャッシュ |

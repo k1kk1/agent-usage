@@ -116,11 +116,12 @@ tmux split-window -h -l 48 'cd /path/to/agent-usage && ./agent-status-pane.sh'
 ```
 pane 起動
   └─ daemon を自動起動（多重起動は PID チェックで防止）
-       └─ 60 秒ごとに収集
-            ├─ Claude 使用量を並列取得
-            ├─ Codex 使用量を並列取得
-            └─ トークン利用数を並列集計（変化したログだけ読み直す）
-                 └─ state.json にアトミック書き込み（tmp → mv）
+       ├─ 利用枠ループ: 60 秒ごと
+       │    ├─ Claude 使用量を並列取得
+       │    ├─ Codex 使用量を並列取得
+       │    └─ 保存済みのトークン集計と合わせて state.json にアトミック書き込み（tmp → mv）
+       └─ トークン集計ループ: 別プロセスで 60 秒ごと
+            └─ トークン利用数を集計（変化したログだけ読み直す）→ *-usage.json に保存
 
 pane
   └─ 3 秒ごとにstate.jsonのハッシュだけを確認し、変化時だけ描画
